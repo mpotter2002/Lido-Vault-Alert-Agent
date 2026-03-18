@@ -5,9 +5,10 @@ import { Alert } from "@/lib/types";
 
 interface Props {
   alerts: Alert[];
+  onDismiss?: (id: string) => void;
 }
 
-export function AlertPanel({ alerts }: Props) {
+export function AlertPanel({ alerts, onDismiss }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   if (alerts.length === 0) {
@@ -29,6 +30,7 @@ export function AlertPanel({ alerts }: Props) {
           onToggle={() =>
             setExpanded(expanded === alert.id ? null : alert.id)
           }
+          onDismiss={onDismiss ? () => onDismiss(alert.id) : undefined}
         />
       ))}
     </div>
@@ -39,10 +41,12 @@ function AlertRow({
   alert,
   isExpanded,
   onToggle,
+  onDismiss,
 }: {
   alert: Alert;
   isExpanded: boolean;
   onToggle: () => void;
+  onDismiss?: () => void;
 }) {
   const { border, icon, badge } = severityStyles(alert.severity);
 
@@ -69,9 +73,20 @@ function AlertRow({
             {alert.summary}
           </p>
         </div>
-        <span className="text-slate-600 text-xs mt-1 flex-shrink-0">
-          {isExpanded ? "▲" : "▼"}
-        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {onDismiss && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDismiss(); }}
+              className="text-slate-600 hover:text-slate-400 text-xs transition-colors px-1"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          )}
+          <span className="text-slate-600 text-xs mt-0.5">
+            {isExpanded ? "▲" : "▼"}
+          </span>
+        </div>
       </button>
 
       {isExpanded && (

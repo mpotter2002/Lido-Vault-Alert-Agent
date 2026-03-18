@@ -63,3 +63,33 @@ export const MOCK_POSITIONS_REFRESH: VaultPosition[] = [
     pendingDepositAmount: 0, // deposit deployed
   },
 ];
+
+// Scenario 3: EarnETH vault paused, withdrawal resolved
+export const MOCK_POSITIONS_SCENARIO3: VaultPosition[] = [
+  {
+    ...MOCK_POSITIONS[0],
+    currentAPY: 0,
+    apyDelta24h: -2.8,
+    health: "paused",
+    pendingWithdrawalAmount: 0, // withdrawal completed
+    pendingWithdrawalAgeDays: null,
+    lastRebalanceHoursAgo: null,
+  },
+  {
+    ...MOCK_POSITIONS_REFRESH[1],
+    currentAPY: 5.3,
+    apyDelta24h: 0.2,
+  },
+];
+
+export const MOCK_SCENARIOS = [
+  MOCK_POSITIONS,
+  MOCK_POSITIONS_REFRESH,
+  MOCK_POSITIONS_SCENARIO3,
+] as const;
+
+export const SCENARIO_LABELS = [
+  "Initial state",
+  "APY recovering, TVL rising",
+  "EarnETH paused, withdrawal resolved",
+] as const;
