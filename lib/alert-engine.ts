@@ -1,6 +1,6 @@
 import { VaultPosition, Alert, AlertSeverity } from "./types";
 import { BenchmarkSnapshot, AllocationSnapshot } from "./domain";
-import { getBenchmarkSnapshot } from "./benchmarks";
+import { fetchBenchmark, getBenchmarkSnapshot } from "./benchmarks";
 import { buildAllocationSnapshot, describeShifts } from "./allocations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
 
@@ -364,8 +364,53 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
  * generateEnrichedAlerts — full form, incorporates benchmark comparison and
  * allocation tracking alongside position-state alerts.
  * Used by /api/health, /api/alerts (enriched), and preview formatters.
+ *
+ * Benchmark values are fetched live (Lido staking-stats API for EarnETH,
+ * DeFiLlama yields API for EarnUSD) and fall back to seeded early-2025
+ * values if the live fetch fails. Check freshness.source on each
+ * BenchmarkSnapshot to know which path was taken.
  */
-export function generateEnrichedAlerts(positions: VaultPosition[]): {
+export async function generateEnrichedAlerts(positions: VaultPosition[]): Promise<{
+  alerts: Alert[];
+  benchmarks: Map<string, BenchmarkSnapshot>;
+  allocationSnapshots: Map<string, AllocationSnapshot>;
+}> {
+  const benchmarks = new Map<string, BenchmarkSnapshot>();
+  const allocationSnapshots = new Map<string, AllocationSnapshot>();
+
+  // Fetch benchmarks in parallel; each call attempts live then falls back to seeded.
+  const benchmarkResults = await Promise.all(
+    positions.map((pos) => fetchBenchmark(pos.vaultId, pos.currentAPY))
+  );
+
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i];
+    benchmarks.set(pos.vaultId, benchmarkResults[i]);
+    allocationSnapshots.set(
+      pos.vaultId,
+      buildAllocationSnapshot(pos.vaultId, pos.strategyWeights, SEEDED_FRESHNESS)
+    );
+  }
+
+  const all = [
+    ...positionAlerts(positions),
+    ...benchmarkAlerts(positions, benchmarks),
+    ...allocationAlerts(positions, allocationSnapshots),
+  ];
+
+  return {
+    alerts: sortAlerts(all),
+    benchmarks,
+    allocationSnapshots,
+  };
+}
+
+/**
+ * generateEnrichedAlertsSync — synchronous form using seeded benchmark data only.
+ * Use when you cannot await. All benchmark freshness will be labeled "seeded".
+ * @internal — prefer generateEnrichedAlerts() in async contexts.
+ */
+export function generateEnrichedAlertsSync(positions: VaultPosition[]): {
   alerts: Alert[];
   benchmarks: Map<string, BenchmarkSnapshot>;
   allocationSnapshots: Map<string, AllocationSnapshot>;

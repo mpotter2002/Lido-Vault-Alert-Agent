@@ -61,11 +61,16 @@ export function buildRecommendation(
     const shiftNote = bigShifts
       ? ` Recent allocation shifts (${describeShifts(allocation.significantShifts)}) may be a contributing factor.`
       : "";
+    const bmSourceNote =
+      benchmark.freshness.source === "seeded"
+        ? ` (Note: benchmark value is a seeded early-2025 fallback — live fetch unavailable; comparison may be stale.)`
+        : "";
     headline = `${vaultLabel} yield trailing ${benchmark.benchmarkName} by ${spreadAbs}bps — monitor`;
     rationale =
       `Current vault APY (${benchmark.vaultAPY.toFixed(2)}%) is trailing ` +
       `${benchmark.benchmarkName} (${benchmark.benchmarkAPY.toFixed(2)}%) by ${spreadAbs}bps, ` +
       `exceeding the acceptable floor of ${Math.abs(benchmark.floorBps)}bps.` +
+      bmSourceNote +
       shiftNote +
       ` No emergency action required, but new deposits are not recommended until yield ` +
       `recovers. The curator is expected to rebalance toward higher-yielding protocols.`;
@@ -73,22 +78,32 @@ export function buildRecommendation(
     action = "monitor";
     urgency = "none";
     const shiftDesc = describeShifts(allocation.significantShifts);
+    const bmSourceNote =
+      benchmark.freshness.source === "seeded"
+        ? ` (Benchmark value is a seeded early-2025 fallback — live fetch unavailable.)`
+        : "";
     headline = `${vaultLabel} curator rebalanced — yield may fluctuate briefly`;
     rationale =
       `The vault curator adjusted protocol allocations: ${shiftDesc}. ` +
       `Current APY (${benchmark.vaultAPY.toFixed(2)}%) is within acceptable range of ` +
-      `${benchmark.benchmarkName} (${benchmark.benchmarkAPY.toFixed(2)}%). ` +
-      `Yield may fluctuate for 12–24h as the new allocation settles. No action needed.`;
+      `${benchmark.benchmarkName} (${benchmark.benchmarkAPY.toFixed(2)}%).` +
+      bmSourceNote +
+      ` Yield may fluctuate for 12–24h as the new allocation settles. No action needed.`;
   } else {
     action = "no_action";
     urgency = "none";
     const spreadSign = benchmark.spreadBps >= 0 ? "+" : "";
+    const bmSourceNote =
+      benchmark.freshness.source === "seeded"
+        ? ` (Benchmark value is a seeded early-2025 fallback — live fetch unavailable.)`
+        : "";
     headline = `${vaultLabel} is healthy — no action needed`;
     rationale =
       `Vault is operating normally. Current APY (${benchmark.vaultAPY.toFixed(2)}%) is ` +
       `${spreadSign}${benchmark.spreadBps}bps vs ${benchmark.benchmarkName} ` +
-      `(${benchmark.benchmarkAPY.toFixed(2)}%), within acceptable range. ` +
-      `No significant allocation changes detected.`;
+      `(${benchmark.benchmarkAPY.toFixed(2)}%), within acceptable range.` +
+      bmSourceNote +
+      ` No significant allocation changes detected.`;
   }
 
   return { vaultId, action, headline, rationale, urgency };

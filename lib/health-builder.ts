@@ -5,12 +5,32 @@ import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
 import { readWalletPosition } from "./wallet-reader";
 
-const SEEDED_DATA_MODE_NOTE =
-  "Vault-level metrics (APY, TVL, health, allocation) are seeded demo data. " +
-  "Wallet-specific position (deposited, shares) is attempted via live on-chain read — " +
-  "see walletPosition.source on each vault for the actual outcome. " +
-  "Benchmark values are fixed reference rates. " +
-  "See /api/alerts, /api/yield-floor, /api/telegram-preview, /api/email-preview for other surfaces.";
+function buildNote(benchmarkSources: Map<string, string>): string {
+  // Build a note that accurately reflects what was read live vs what is seeded.
+  const bmLines: string[] = [];
+  benchmarkSources.forEach((source, vaultId) => {
+    if (source === "live") {
+      bmLines.push(
+        `${vaultId} benchmark: live (${
+          vaultId === "earnETH" ? "Lido staking-stats API" : "DeFiLlama yields API"
+        })`
+      );
+    } else {
+      bmLines.push(`${vaultId} benchmark: seeded fallback (early-2025 conditions — live fetch failed)`);
+    }
+  });
+  const bmSummary = bmLines.length
+    ? `Benchmark APYs — ${bmLines.join("; ")}. `
+    : "Benchmark values are seeded reference rates. ";
+
+  return (
+    "Vault-level metrics (APY, TVL, health, allocation) are seeded demo data. " +
+    "Wallet-specific position (deposited, shares) is attempted via live on-chain read — " +
+    "see walletPosition.source on each vault for the actual outcome. " +
+    bmSummary +
+    "See /api/alerts, /api/yield-floor, /api/telegram-preview, /api/email-preview for other surfaces."
+  );
+}
 
 const VAULT_DATA_FRESHNESS: SourceFreshness = {
   source: "seeded",
@@ -36,7 +56,7 @@ export async function buildHealthResponse(
   wallet: string,
   positions: VaultPosition[]
 ): Promise<AgentHealthResponse> {
-  const { alerts, benchmarks, allocationSnapshots } = generateEnrichedAlerts(positions);
+  const { alerts, benchmarks, allocationSnapshots } = await generateEnrichedAlerts(positions);
 
   // Attempt live wallet reads for all vaults in parallel.
   const walletReads = await Promise.all(
@@ -103,16 +123,17 @@ export async function buildHealthResponse(
     };
   });
 
-  const anyLive = walletReads.some((r) => r.source === "live_wallet_read");
-  const dataMode: "seeded_demo" | "live" = anyLive ? "seeded_demo" : "seeded_demo";
-  // dataMode stays "seeded_demo" because vault-level data is still seeded;
-  // individual walletPosition.source indicates the live/unavailable status per vault.
+  // dataMode stays "seeded_demo" because vault-level data (APY, TVL, health,
+  // strategies) is still seeded. Individual walletPosition.source and each
+  // vault's benchmark.freshness.source show per-field live/seeded status.
+  const benchmarkSources = new Map<string, string>();
+  benchmarks.forEach((bm, vaultId) => benchmarkSources.set(vaultId, bm.freshness.source));
 
   return {
     wallet,
     generatedAt: new Date().toISOString(),
-    dataMode,
-    note: SEEDED_DATA_MODE_NOTE,
+    dataMode: "seeded_demo" as const,
+    note: buildNote(benchmarkSources),
     vaults,
   };
 }

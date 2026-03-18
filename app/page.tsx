@@ -4,7 +4,7 @@ import { useState } from "react";
 import { VaultCard } from "@/components/VaultCard";
 import { AlertPanel } from "@/components/AlertPanel";
 import { MOCK_SCENARIOS, SCENARIO_LABELS, DEMO_WALLET } from "@/lib/mock-data";
-import { generateEnrichedAlerts } from "@/lib/alert-engine";
+import { generateEnrichedAlertsSync } from "@/lib/alert-engine";
 import { VaultPosition } from "@/lib/types";
 
 export default function Home() {
@@ -14,7 +14,10 @@ export default function Home() {
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
 
-  const { alerts: allAlerts } = generateEnrichedAlerts(positions);
+  // Sync form used here: this is a client component that can't await.
+  // Benchmarks shown in the UI will use seeded values; live benchmarks are
+  // available via /api/alerts, /api/health, /api/yield-floor.
+  const { alerts: allAlerts } = generateEnrichedAlertsSync(positions);
   const alerts = allAlerts.filter((a) => !dismissedIds.has(a.id));
   const criticalCount = alerts.filter((a) => a.severity === "critical").length;
   const warningCount = alerts.filter((a) => a.severity === "warning").length;

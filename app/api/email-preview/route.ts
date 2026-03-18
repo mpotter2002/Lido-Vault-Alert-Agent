@@ -14,7 +14,7 @@ import { formatEmailAlert } from "@/lib/formatters";
  * cron handler to deliver these via real email when ready.
  */
 export async function GET() {
-  const { alerts } = generateEnrichedAlerts(MOCK_POSITIONS);
+  const { alerts } = await generateEnrichedAlerts(MOCK_POSITIONS);
   const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
 
   const email = formatEmailAlert(DEMO_WALLET, alerts, health.vaults);

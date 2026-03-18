@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   }
 
   // Build alert content
-  const { alerts } = generateEnrichedAlerts(MOCK_POSITIONS);
+  const { alerts } = await generateEnrichedAlerts(MOCK_POSITIONS);
   const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
   const payload = composeTelegramMessage(
     DEMO_WALLET,

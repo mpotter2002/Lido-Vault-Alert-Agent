@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   const vaultFilter = searchParams.get("vault");
   const typeFilter = searchParams.get("type");
 
-  const { alerts, benchmarks } = generateEnrichedAlerts(MOCK_POSITIONS);
+  const { alerts, benchmarks } = await generateEnrichedAlerts(MOCK_POSITIONS);
 
   const filtered = alerts.filter((a) => {
     if (severityFilter && a.severity !== severityFilter) return false;
@@ -35,7 +35,9 @@ export async function GET(request: Request) {
     return true;
   });
 
-  // Attach benchmark freshness info to the response envelope
+  // Attach benchmark freshness info to the response envelope.
+  // freshness.source = "live" means the value was fetched from Lido/DeFiLlama this request.
+  // freshness.source = "seeded" means the live fetch failed; value is an early-2025 fallback.
   const benchmarkMeta: Record<string, object> = {};
   benchmarks.forEach((bm, vaultId) => {
     benchmarkMeta[vaultId] = {
@@ -44,8 +46,11 @@ export async function GET(request: Request) {
       vaultAPY: bm.vaultAPY,
       spreadBps: bm.spreadBps,
       belowFloor: bm.belowFloor,
-      source: bm.freshness.source,
-      asOf: bm.freshness.asOf,
+      freshness: {
+        source: bm.freshness.source,
+        asOf: bm.freshness.asOf,
+        note: bm.freshness.note,
+      },
     };
   });
 
@@ -79,9 +84,10 @@ export async function GET(request: Request) {
     generatedAt: new Date().toISOString(),
     dataMode: "seeded_demo",
     note:
-      "Vault state is seeded demo data. Benchmark values are fixed reference rates. " +
-      "See freshness.source on each benchmark entry. " +
-      "Wire Lido JS SDK for live vault reads.",
+      "Vault state (APY, TVL, health, strategies) is seeded demo data. " +
+      "Benchmark APYs are attempted live (Lido staking-stats API / DeFiLlama yields API) " +
+      "and fall back to seeded early-2025 values if the fetch fails. " +
+      "See benchmarks[vaultId].freshness.source for the actual outcome per vault.",
     agentSummary,
     benchmarks: benchmarkMeta,
     alertCount: filtered.length,
