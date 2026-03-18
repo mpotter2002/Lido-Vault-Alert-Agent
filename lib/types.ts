@@ -40,7 +40,10 @@ export type AlertType =
   | "vault_pause"
   | "tvl_cap_approaching"
   | "curator_rebalance"
-  | "vault_unhealthy";
+  | "vault_unhealthy"
+  | "benchmark_underperformance"
+  | "benchmark_recovery"
+  | "allocation_shift";
 
 export interface Alert {
   id: string;
