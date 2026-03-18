@@ -63,7 +63,15 @@ export function VaultCard({ position: p }: Props) {
 
       {/* Key metrics row */}
       <div className="grid grid-cols-3 gap-3">
-        <Metric label="Deposited" value={`${p.deposited} ${p.asset}`} />
+        <Metric
+          label="Deposited"
+          value={p.deposited !== null ? `${p.deposited} ${p.asset}` : "—"}
+          sub={
+            p.deposited === null ? (
+              <span className="text-[10px] text-slate-600">wallet not read</span>
+            ) : undefined
+          }
+        />
         <Metric
           label="Current APY"
           value={`${p.currentAPY.toFixed(1)}%`}
@@ -76,8 +84,14 @@ export function VaultCard({ position: p }: Props) {
         />
         <Metric
           label="Shares"
-          value={p.shares.toFixed(4)}
-          sub={<span className="text-xs text-slate-500">{p.asset} equiv.</span>}
+          value={p.shares !== null ? p.shares.toFixed(4) : "—"}
+          sub={
+            p.shares === null ? (
+              <span className="text-[10px] text-slate-600">wallet not read</span>
+            ) : (
+              <span className="text-xs text-slate-500">{p.asset} equiv.</span>
+            )
+          }
         />
       </div>
 

@@ -87,11 +87,11 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Vault positions */}
+        {/* Vault status — vault-level metrics only; wallet balance not wired */}
         <section>
           <SectionHeader
-            title="Your Positions"
-            sub={`${positions.length} active vault${positions.length !== 1 ? "s" : ""}`}
+            title="Vault Status"
+            sub={`${positions.length} vault${positions.length !== 1 ? "s" : ""} · wallet balance unavailable`}
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {positions.map((pos) => (

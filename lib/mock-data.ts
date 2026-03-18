@@ -1,14 +1,31 @@
 import { VaultPosition } from "./types";
 
-// Demo wallet — the address we pretend to monitor
+// Demo wallet — the address we monitor in the seeded demo.
+// No live on-chain reads are performed; wallet-specific balance fields
+// (deposited, shares) are intentionally null/unavailable.
 export const DEMO_WALLET = "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
 
 // ---------------------------------------------------------------------------
+// DATA MODEL NOTE
+// ---------------
+// Vault-level fields (APY, TVL, health, strategy weights) are seeded demo
+// values that mimic realistic on-chain state.  They are NOT reads from any
+// live contract but they do represent plausible vault metrics.
+//
+// Wallet-position fields (deposited, shares) are NOT seeded.  The agent has
+// no wired wallet read, so those fields are null with source "unavailable".
+// Never present them as known facts in UI or API responses.
+//
+// Pending-transaction fields (pendingDepositAmount, pendingWithdrawalAmount,
+// pendingWithdrawalAgeDays) are set in some scenarios purely to exercise
+// withdrawal-delay and deposit-queued alert paths.  They are demo scenarios,
+// not reads from the actual demo wallet.
+// ---------------------------------------------------------------------------
+
 // Scenario 1 — Initial state
 //
 // EarnETH: moderate APY drop, Pendle allocation reduced heavily (→ Morpho).
 // EarnUSD: healthy, with a pending deposit and a spread across all 5 protocols.
-// ---------------------------------------------------------------------------
 
 export const MOCK_POSITIONS: VaultPosition[] = [
   {
@@ -16,8 +33,9 @@ export const MOCK_POSITIONS: VaultPosition[] = [
     vaultName: "Lido Earn ETH",
     asset: "ETH",
     contractAddress: "0x7047F90229a057C13BF847C0744D646CFb6c9E1a",
-    deposited: 2.0,
-    shares: 1.9847,
+    walletPositionSource: "unavailable",
+    deposited: null,
+    shares: null,
     currentAPY: 2.8,
     apyDelta24h: -1.4,
     tvl: 148_200_000,
@@ -41,8 +59,9 @@ export const MOCK_POSITIONS: VaultPosition[] = [
     vaultName: "Lido Earn USD",
     asset: "USDC",
     contractAddress: "0x4f3166003E149C1B6E7E01cEa4B5Bb9FeD62aBCf",
-    deposited: 5000,
-    shares: 4989.12,
+    walletPositionSource: "unavailable",
+    deposited: null,
+    shares: null,
     currentAPY: 5.1,
     apyDelta24h: 0.2,
     tvl: 87_500_000,

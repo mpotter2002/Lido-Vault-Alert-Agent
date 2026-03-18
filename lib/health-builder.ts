@@ -1,5 +1,5 @@
 import { VaultPosition } from "./types";
-import { VaultHealthSummary, AgentHealthResponse, SourceFreshness } from "./domain";
+import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState } from "./domain";
 import { generateEnrichedAlerts } from "./alert-engine";
 import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
@@ -35,12 +35,28 @@ export function buildHealthResponse(
       posAlerts
     );
 
+    const walletPosition: WalletPositionState =
+      pos.walletPositionSource === "unavailable"
+        ? {
+            source: "unavailable",
+            deposited: null,
+            shares: null,
+            note: "Wallet balance not read. Wire Lido JS SDK / EVM call to populate deposited and shares.",
+          }
+        : {
+            source: "live_wallet_read",
+            deposited: pos.deposited,
+            shares: pos.shares,
+            note: "Values sourced from a live on-chain wallet read.",
+          };
+
     return {
       vaultId: pos.vaultId,
       vaultName: pos.vaultName,
       contractAddress: pos.contractAddress,
       health: pos.health,
       currentAPY: pos.currentAPY,
+      walletPosition,
       benchmark: bm,
       allocation: alloc,
       recommendation,
@@ -55,8 +71,9 @@ export function buildHealthResponse(
     generatedAt: new Date().toISOString(),
     dataMode: "seeded_demo",
     note:
-      "All vault state is seeded demo data. Benchmark values are fixed reference rates from early 2025. " +
-      "Freshness fields on each vault indicate data mode. " +
+      "Vault-level metrics (APY, TVL, health, allocation) are seeded demo data. " +
+      "Wallet-specific position (deposited, shares) is not wired — see walletPosition.source on each vault. " +
+      "Benchmark values are fixed reference rates. " +
       "See /api/alerts, /api/yield-floor, /api/telegram-preview, /api/email-preview for other surfaces.",
     vaults,
   };

@@ -77,6 +77,19 @@ export interface Recommendation {
 }
 
 // ---------------------------------------------------------------------------
+// Wallet position state — explicitly tracks whether we have a real wallet read
+// ---------------------------------------------------------------------------
+
+export interface WalletPositionState {
+  // "live_wallet_read" = values came from a real on-chain read for the wallet.
+  // "unavailable" = no wallet read has been wired; deposited and shares are null.
+  source: "live_wallet_read" | "unavailable";
+  deposited: number | null; // asset units; null when source = "unavailable"
+  shares: number | null;    // vault shares; null when source = "unavailable"
+  note: string;
+}
+
+// ---------------------------------------------------------------------------
 // Vault health summary — the canonical MCP-friendly output shape
 // ---------------------------------------------------------------------------
 
@@ -86,6 +99,9 @@ export interface VaultHealthSummary {
   contractAddress: string;
   health: VaultHealth;
   currentAPY: number;
+  // walletPosition is separate from vault-level metrics.
+  // When source = "unavailable" the agent has not yet wired a live wallet read.
+  walletPosition: WalletPositionState;
   benchmark: BenchmarkSnapshot;
   allocation: AllocationSnapshot;
   recommendation: Recommendation;

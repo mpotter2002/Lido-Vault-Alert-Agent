@@ -3,23 +3,35 @@ export type VaultId = "earnETH" | "earnUSD";
 export type VaultHealth = "healthy" | "degraded" | "paused";
 
 export interface VaultPosition {
+  // ── Vault-level fields (public on-chain / from vault contract) ──────────
   vaultId: VaultId;
   vaultName: string;
   asset: string; // "ETH" | "USDC"
   contractAddress: string;
-  deposited: number; // in asset units
-  shares: number;
   currentAPY: number; // percent, e.g. 4.2
   apyDelta24h: number; // percent change over 24h, e.g. -1.4
   tvl: number; // total vault TVL in USD
   tvlCapUSD: number; // max vault TVL in USD
-  pendingDepositAmount: number; // queued but not yet deployed
-  pendingWithdrawalAmount: number; // requested but not yet processed
-  pendingWithdrawalAgeDays: number | null; // how long pending withdrawal has been waiting
   health: VaultHealth;
   curatorName: string;
   lastRebalanceHoursAgo: number | null;
   strategyWeights: StrategyWeight[];
+
+  // ── Wallet-position fields (require a per-wallet on-chain read) ──────────
+  // walletPositionSource indicates whether these values are real.
+  // When "unavailable" the agent has not yet performed a live wallet read;
+  // deposited and shares will be null and must not be presented as known facts.
+  walletPositionSource: "live_wallet_read" | "unavailable";
+  deposited: number | null; // asset units held by the monitored wallet; null = not read
+  shares: number | null;    // vault shares held; null = not read
+
+  // ── Demo-scenario pending-transaction fields ──────────────────────────────
+  // In production these also require wallet reads.  In the seeded demo they are
+  // set to non-zero values purely to exercise withdrawal-delay and deposit-queued
+  // alert scenarios; they do NOT represent reads from the demo wallet.
+  pendingDepositAmount: number;
+  pendingWithdrawalAmount: number;
+  pendingWithdrawalAgeDays: number | null;
 }
 
 export interface StrategyWeight {
