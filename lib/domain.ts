@@ -118,6 +118,23 @@ export interface LiveTvlState {
 }
 
 // ---------------------------------------------------------------------------
+// Live vault APY from DeFiLlama — separate from the seeded APY in VaultPosition
+// ---------------------------------------------------------------------------
+
+export interface LiveVaultApySummary {
+  /**
+   * "live"        — APY fetched from DeFiLlama this request (may be from LKG cache).
+   * "unavailable" — DeFiLlama fetch failed or vault not indexed; seeded APY applies.
+   */
+  source: "live" | "unavailable";
+  /** Current APY % from DeFiLlama. null when source = "unavailable". */
+  apy: number | null;
+  /** 7-day average APY % from DeFiLlama (coarse trend indicator). null if not returned. */
+  apy7dAvg: number | null;
+  note: string;
+}
+
+// ---------------------------------------------------------------------------
 // Vault health summary — the canonical MCP-friendly output shape
 // ---------------------------------------------------------------------------
 
@@ -126,10 +143,20 @@ export interface VaultHealthSummary {
   vaultName: string;
   contractAddress: string;
   health: VaultHealth;
+  /**
+   * currentAPY reflects the live DeFiLlama APY when available, otherwise the
+   * seeded demo value. Always check liveVaultApy.source to understand provenance.
+   */
   currentAPY: number;
   // walletPosition is separate from vault-level metrics.
   // When source = "unavailable" the agent has not yet wired a live wallet read.
   walletPosition: WalletPositionState;
+  /**
+   * Live vault APY from DeFiLlama. When source = "live", currentAPY is the real
+   * on-chain published APY and benchmark comparisons are real vs real.
+   * When source = "unavailable", currentAPY is the seeded demo value.
+   */
+  liveVaultApy: LiveVaultApySummary;
   /**
    * Live vault TVL read via ERC-4626 totalAssets(). Separate from the seeded
    * TVL in VaultPosition (used for internal alert rules). When available, this

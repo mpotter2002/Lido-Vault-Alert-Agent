@@ -1,9 +1,10 @@
 import { VaultPosition } from "./types";
-import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState, LiveTvlState } from "./domain";
+import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState, LiveTvlState, LiveVaultApySummary } from "./domain";
 import { generateEnrichedAlerts } from "./alert-engine";
 import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
 import { readWalletPosition, readVaultTvl } from "./wallet-reader";
+import { fetchVaultAPY } from "./vault-apy-reader";
 
 function buildNote(benchmarkSources: Map<string, string>): string {
   // Build a note that accurately reflects data provenance.
@@ -25,9 +26,11 @@ function buildNote(benchmarkSources: Map<string, string>): string {
     : "Benchmark values are unavailable. ";
 
   return (
-    "Vault-level metrics (APY, TVL, health, allocation) are seeded demo data. " +
-    "Wallet-specific position (deposited, shares) is attempted via live on-chain read — " +
-    "see walletPosition.source on each vault for the actual outcome. " +
+    "Vault APY is attempted live from DeFiLlama — see liveVaultApy.source on each vault. " +
+    "When live, currentAPY and benchmark comparisons are real vs real. " +
+    "When unavailable, currentAPY is seeded demo data. " +
+    "Vault health and allocation data are seeded. " +
+    "Wallet-specific position is attempted via live on-chain read — see walletPosition.source. " +
     bmSummary +
     "See /api/alerts, /api/yield-floor, /api/telegram-preview, /api/email-preview for other surfaces."
   );
@@ -57,15 +60,35 @@ export async function buildHealthResponse(
   wallet: string,
   positions: VaultPosition[]
 ): Promise<AgentHealthResponse> {
-  const { alerts, benchmarks, allocationSnapshots } = await generateEnrichedAlerts(positions);
-
-  // Attempt live wallet reads and live vault TVL reads for all vaults in parallel.
-  const [walletReads, tvlReads] = await Promise.all([
+  // Attempt live vault APY reads from DeFiLlama in parallel with everything else.
+  // If found, overlay real APY so benchmark comparisons are real vs real.
+  const [liveApyReads, walletReads, tvlReads] = await Promise.all([
+    Promise.all(positions.map((pos) => fetchVaultAPY(pos.contractAddress, pos.asset))),
     Promise.all(positions.map((pos) => readWalletPosition(wallet, pos.contractAddress))),
     Promise.all(positions.map((pos) => readVaultTvl(pos.contractAddress, pos.asset))),
   ]);
 
-  const vaults: VaultHealthSummary[] = positions.map((pos, idx) => {
+  // Patch positions: overlay live APY where available so alert engine and
+  // benchmark comparisons use real data instead of seeded demo values.
+  // apyDelta24h is set to 0 when live APY is used — we don't have a reliable
+  // 24h delta from DeFiLlama (only 7d avg), so we suppress delta-based alerts
+  // rather than mix real and invented numbers.
+  const patchedPositions: VaultPosition[] = positions.map((pos, idx) => {
+    const liveApy = liveApyReads[idx];
+    if (liveApy.source === "live" && liveApy.apy !== null) {
+      return {
+        ...pos,
+        currentAPY: liveApy.apy,
+        apyDelta24h: 0, // no reliable 24h delta from DeFiLlama
+        vaultMetricsSource: "live" as const,
+      };
+    }
+    return pos;
+  });
+
+  const { alerts, benchmarks, allocationSnapshots } = await generateEnrichedAlerts(patchedPositions);
+
+  const vaults: VaultHealthSummary[] = patchedPositions.map((pos, idx) => {
     const bm = benchmarks.get(pos.vaultId)!;
     const alloc = allocationSnapshots.get(pos.vaultId)!;
     const posAlerts = alerts.filter((a) => a.vaultId === pos.vaultId);
@@ -79,6 +102,28 @@ export async function buildHealthResponse(
 
     const read = walletReads[idx];
     let walletPosition: WalletPositionState;
+
+    // Build liveVaultApy summary for this vault.
+    const liveApyRead = liveApyReads[idx];
+    let liveVaultApy: LiveVaultApySummary;
+    if (liveApyRead.source === "live" && liveApyRead.apy !== null) {
+      liveVaultApy = {
+        source: "live",
+        apy: liveApyRead.apy,
+        apy7dAvg: liveApyRead.apy7dAvg,
+        note: liveApyRead.note,
+      };
+    } else {
+      liveVaultApy = {
+        source: "unavailable",
+        apy: null,
+        apy7dAvg: null,
+        note:
+          liveApyRead.source === "unavailable"
+            ? liveApyRead.reason
+            : "DeFiLlama vault APY not found — seeded demo APY applies.",
+      };
+    }
 
     // Build liveTvl state from on-chain totalAssets() read.
     const tvlRead = tvlReads[idx];
@@ -136,8 +181,11 @@ export async function buildHealthResponse(
       vaultName: pos.vaultName,
       contractAddress: pos.contractAddress,
       health: pos.health,
+      // Use live APY (already patched into pos.currentAPY) when available;
+      // otherwise falls back to the seeded demo value.
       currentAPY: pos.currentAPY,
       walletPosition,
+      liveVaultApy,
       liveTvl,
       benchmark: bm,
       allocation: alloc,
@@ -148,12 +196,13 @@ export async function buildHealthResponse(
     };
   });
 
-  // dataMode: "partial_live" when any live on-chain data succeeded (wallet or TVL reads);
+  // dataMode: "partial_live" when any live data succeeded (APY, wallet, or TVL reads);
   // "seeded_demo" when all live reads failed and we're serving only seeded values.
+  const anyLiveApy = vaults.some((v) => v.liveVaultApy.source === "live");
   const anyLiveTvl = vaults.some((v) => v.liveTvl.source === "live_vault_read");
   const anyLiveWallet = vaults.some((v) => v.walletPosition.source === "live_wallet_read");
   const dataMode: "seeded_demo" | "partial_live" =
-    anyLiveTvl || anyLiveWallet ? "partial_live" : "seeded_demo";
+    anyLiveApy || anyLiveTvl || anyLiveWallet ? "partial_live" : "seeded_demo";
 
   const benchmarkSources = new Map<string, string>();
   benchmarks.forEach((bm, vaultId) => benchmarkSources.set(vaultId, bm.freshness.source));

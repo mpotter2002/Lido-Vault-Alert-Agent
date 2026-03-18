@@ -35,17 +35,11 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
   const alerts: Alert[] = [];
 
   for (const pos of positions) {
-    // Shared label for alerts driven by seeded vault metrics (APY, TVL, health).
-    // Mirrors the demoTag/demoNote pattern used for wallet-position alerts.
-    const seededTag =
-      pos.vaultMetricsSource === "seeded_demo" ? " [seeded data]" : "";
-    const seededNote =
-      pos.vaultMetricsSource === "seeded_demo"
-        ? " Note: vault APY is seeded demo data — no live contract read has been performed."
-        : "";
-
     // APY drop > 15% relative in 24h
-    if (pos.apyDelta24h < 0) {
+    // Suppressed when vault metrics are seeded: apyDelta24h is a fabricated demo value,
+    // not a real observed change. Firing a "drop" alert from invented data is misleading.
+    // When live vault APY is wired, this block will fire on real deltas.
+    if (pos.vaultMetricsSource !== "seeded_demo" && pos.apyDelta24h < 0) {
       const prevAPY = pos.currentAPY - pos.apyDelta24h;
       const relDrop = Math.abs(pos.apyDelta24h) / prevAPY;
       if (relDrop >= 0.15) {
@@ -56,8 +50,8 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
           vaultName: pos.vaultName,
           type: "apy_drop",
           severity: "warning",
-          title: `APY dropped ${Math.abs(pos.apyDelta24h).toFixed(1)}pp in 24h${seededTag}`,
-          summary: `${pos.vaultName} yield fell from ${prevFormatted}% to ${pos.currentAPY.toFixed(1)}% APY over the last 24 hours. This follows a strategy rebalance by the vault curator (${pos.curatorName}). No immediate action needed — yield is expected to stabilise as the new allocation settles.${seededNote}`,
+          title: `APY dropped ${Math.abs(pos.apyDelta24h).toFixed(1)}pp in 24h`,
+          summary: `${pos.vaultName} yield fell from ${prevFormatted}% to ${pos.currentAPY.toFixed(1)}% APY over the last 24 hours. This follows a strategy rebalance by the vault curator (${pos.curatorName}). No immediate action needed — yield is expected to stabilise as the new allocation settles.`,
           technicalDetail: buildStrategyDetail(pos) + ` vaultMetricsSource: ${pos.vaultMetricsSource}.`,
           actionRequired: false,
           suggestedAction: null,
@@ -68,7 +62,8 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
     }
 
     // APY recovery >= 10% relative in 24h
-    if (pos.apyDelta24h > 0) {
+    // Same rationale: suppressed when seeded. apyDelta24h from demo scenarios is invented.
+    if (pos.vaultMetricsSource !== "seeded_demo" && pos.apyDelta24h > 0) {
       const prevAPY = pos.currentAPY - pos.apyDelta24h;
       if (prevAPY > 0) {
         const relGain = pos.apyDelta24h / prevAPY;
@@ -79,8 +74,8 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
             vaultName: pos.vaultName,
             type: "apy_recovery",
             severity: "info",
-            title: `APY recovering — now ${pos.currentAPY.toFixed(1)}%${seededTag}`,
-            summary: `${pos.vaultName} yield has increased by ${pos.apyDelta24h.toFixed(1)}pp over the last 24 hours and is now ${pos.currentAPY.toFixed(1)}% APY. The curator rebalance appears to be settling positively.${seededNote}`,
+            title: `APY recovering — now ${pos.currentAPY.toFixed(1)}%`,
+            summary: `${pos.vaultName} yield has increased by ${pos.apyDelta24h.toFixed(1)}pp over the last 24 hours and is now ${pos.currentAPY.toFixed(1)}% APY. The curator rebalance appears to be settling positively.`,
             technicalDetail: buildStrategyDetail(pos) + ` vaultMetricsSource: ${pos.vaultMetricsSource}.`,
             actionRequired: false,
             suggestedAction: null,
@@ -163,22 +158,19 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
     }
 
     // TVL cap approaching (>88%)
-    const tvlSeededTag =
-      pos.vaultMetricsSource === "seeded_demo" ? " [seeded data]" : "";
-    const tvlSeededNote =
-      pos.vaultMetricsSource === "seeded_demo"
-        ? " Note: TVL and cap figures are seeded demo data — no live contract read has been performed."
-        : "";
+    // Suppressed when vault metrics are seeded: the TVL and cap figures are demo values,
+    // not real on-chain reads. Firing a cap alert from invented numbers is misleading.
+    // When live vault TVL is wired (via totalAssets() reads), this block will activate.
     const tvlUtilization = pos.tvl / pos.tvlCapUSD;
-    if (tvlUtilization >= 0.88) {
+    if (pos.vaultMetricsSource !== "seeded_demo" && tvlUtilization >= 0.88) {
       alerts.push({
         id: makeId(),
         vaultId: pos.vaultId,
         vaultName: pos.vaultName,
         type: "tvl_cap_approaching",
         severity: "warning",
-        title: `${pos.vaultName} is ${(tvlUtilization * 100).toFixed(0)}% full${tvlSeededTag}`,
-        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.${tvlSeededNote}`,
+        title: `${pos.vaultName} is ${(tvlUtilization * 100).toFixed(0)}% full`,
+        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.`,
         technicalDetail: `Current TVL: $${(pos.tvl / 1e6).toFixed(1)}M. Cap: $${(pos.tvlCapUSD / 1e6).toFixed(0)}M. Utilization: ${(tvlUtilization * 100).toFixed(1)}%. vaultMetricsSource: ${pos.vaultMetricsSource}.`,
         actionRequired: false,
         suggestedAction: "Deposit soon if you plan to increase your position, or monitor for a cap raise.",
