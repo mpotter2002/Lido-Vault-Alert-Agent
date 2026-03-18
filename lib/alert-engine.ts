@@ -35,6 +35,15 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
   const alerts: Alert[] = [];
 
   for (const pos of positions) {
+    // Shared label for alerts driven by seeded vault metrics (APY, TVL, health).
+    // Mirrors the demoTag/demoNote pattern used for wallet-position alerts.
+    const seededTag =
+      pos.vaultMetricsSource === "seeded_demo" ? " [seeded data]" : "";
+    const seededNote =
+      pos.vaultMetricsSource === "seeded_demo"
+        ? " Note: vault APY is seeded demo data — no live contract read has been performed."
+        : "";
+
     // APY drop > 15% relative in 24h
     if (pos.apyDelta24h < 0) {
       const prevAPY = pos.currentAPY - pos.apyDelta24h;
@@ -47,9 +56,9 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
           vaultName: pos.vaultName,
           type: "apy_drop",
           severity: "warning",
-          title: `APY dropped ${Math.abs(pos.apyDelta24h).toFixed(1)}pp in 24h`,
-          summary: `${pos.vaultName} yield fell from ${prevFormatted}% to ${pos.currentAPY.toFixed(1)}% APY over the last 24 hours. This follows a strategy rebalance by the vault curator (${pos.curatorName}). No immediate action needed — yield is expected to stabilise as the new allocation settles.`,
-          technicalDetail: buildStrategyDetail(pos),
+          title: `APY dropped ${Math.abs(pos.apyDelta24h).toFixed(1)}pp in 24h${seededTag}`,
+          summary: `${pos.vaultName} yield fell from ${prevFormatted}% to ${pos.currentAPY.toFixed(1)}% APY over the last 24 hours. This follows a strategy rebalance by the vault curator (${pos.curatorName}). No immediate action needed — yield is expected to stabilise as the new allocation settles.${seededNote}`,
+          technicalDetail: buildStrategyDetail(pos) + ` vaultMetricsSource: ${pos.vaultMetricsSource}.`,
           actionRequired: false,
           suggestedAction: null,
           timestamp: ago(2),
@@ -70,9 +79,9 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
             vaultName: pos.vaultName,
             type: "apy_recovery",
             severity: "info",
-            title: `APY recovering — now ${pos.currentAPY.toFixed(1)}%`,
-            summary: `${pos.vaultName} yield has increased by ${pos.apyDelta24h.toFixed(1)}pp over the last 24 hours and is now ${pos.currentAPY.toFixed(1)}% APY. The curator rebalance appears to be settling positively.`,
-            technicalDetail: buildStrategyDetail(pos),
+            title: `APY recovering — now ${pos.currentAPY.toFixed(1)}%${seededTag}`,
+            summary: `${pos.vaultName} yield has increased by ${pos.apyDelta24h.toFixed(1)}pp over the last 24 hours and is now ${pos.currentAPY.toFixed(1)}% APY. The curator rebalance appears to be settling positively.${seededNote}`,
+            technicalDetail: buildStrategyDetail(pos) + ` vaultMetricsSource: ${pos.vaultMetricsSource}.`,
             actionRequired: false,
             suggestedAction: null,
             timestamp: ago(1),
@@ -154,6 +163,12 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
     }
 
     // TVL cap approaching (>88%)
+    const tvlSeededTag =
+      pos.vaultMetricsSource === "seeded_demo" ? " [seeded data]" : "";
+    const tvlSeededNote =
+      pos.vaultMetricsSource === "seeded_demo"
+        ? " Note: TVL and cap figures are seeded demo data — no live contract read has been performed."
+        : "";
     const tvlUtilization = pos.tvl / pos.tvlCapUSD;
     if (tvlUtilization >= 0.88) {
       alerts.push({
@@ -162,9 +177,9 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
         vaultName: pos.vaultName,
         type: "tvl_cap_approaching",
         severity: "warning",
-        title: `${pos.vaultName} is ${(tvlUtilization * 100).toFixed(0)}% full`,
-        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.`,
-        technicalDetail: `Current TVL: $${(pos.tvl / 1e6).toFixed(1)}M. Cap: $${(pos.tvlCapUSD / 1e6).toFixed(0)}M. Utilization: ${(tvlUtilization * 100).toFixed(1)}%.`,
+        title: `${pos.vaultName} is ${(tvlUtilization * 100).toFixed(0)}% full${tvlSeededTag}`,
+        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.${tvlSeededNote}`,
+        technicalDetail: `Current TVL: $${(pos.tvl / 1e6).toFixed(1)}M. Cap: $${(pos.tvlCapUSD / 1e6).toFixed(0)}M. Utilization: ${(tvlUtilization * 100).toFixed(1)}%. vaultMetricsSource: ${pos.vaultMetricsSource}.`,
         actionRequired: false,
         suggestedAction: "Deposit soon if you plan to increase your position, or monitor for a cap raise.",
         timestamp: ago(5),
@@ -173,6 +188,11 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
     }
 
     // Vault health degraded or paused
+    const healthSeededNote =
+      pos.vaultMetricsSource === "seeded_demo"
+        ? ` vaultMetricsSource: seeded_demo — health status is a demo scenario value, not a live contract read.`
+        : "";
+
     if (pos.health === "degraded") {
       alerts.push({
         id: makeId(),
@@ -182,7 +202,7 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
         severity: "critical",
         title: `${pos.vaultName} vault health degraded`,
         summary: `The ${pos.vaultName} vault is reporting a degraded health status. This may indicate a strategy issue or oracle problem. New deposits are not recommended.`,
-        technicalDetail: `Vault health check returned: ${pos.health}. Curator: ${pos.curatorName}.`,
+        technicalDetail: `Vault health check returned: ${pos.health}. Curator: ${pos.curatorName}.${healthSeededNote}`,
         actionRequired: true,
         suggestedAction:
           "Monitor Lido Earn announcements. Consider initiating a withdrawal if the status persists.",
@@ -200,7 +220,7 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
         severity: "critical",
         title: `${pos.vaultName} is paused`,
         summary: `The ${pos.vaultName} vault has been paused. Deposits and withdrawals are temporarily halted as a safety measure. Funds in this vault cannot move until the pause is lifted.`,
-        technicalDetail: `Vault ${pos.contractAddress} is in paused state. Curator: ${pos.curatorName}.`,
+        technicalDetail: `Vault ${pos.contractAddress} is in paused state. Curator: ${pos.curatorName}.${healthSeededNote}`,
         actionRequired: true,
         suggestedAction:
           "Follow Lido Earn channels for a resolution timeline. No on-chain action is possible until unpaused.",

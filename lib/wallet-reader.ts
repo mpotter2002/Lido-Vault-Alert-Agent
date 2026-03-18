@@ -55,6 +55,8 @@ const SEL_BALANCE_OF = "0x70a08231";
 const SEL_CONVERT_TO_ASSETS = "0x07a2d13a";
 // decimals() → 0x313ce567
 const SEL_DECIMALS = "0x313ce567";
+// totalAssets() → 0x01e1d4aa  (ERC-4626 standard)
+const SEL_TOTAL_ASSETS = "0x01e1d4aa";
 
 // ---------------------------------------------------------------------------
 // Encoding helpers
@@ -118,6 +120,83 @@ async function ethCall(
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Vault TVL reader — reads ERC-4626 totalAssets() from the vault contract
+// ---------------------------------------------------------------------------
+
+export interface VaultTvlSuccess {
+  source: "live_vault_read";
+  contractAddress: string;
+  /** Total assets held by the vault in the vault's native asset (e.g. ETH or USDC). */
+  totalAssetsNative: number;
+  /**
+   * Asset ticker for the native amount.
+   * "USDC" → totalAssetsNative ≈ USD value.
+   * "ETH"  → requires a price feed for USD conversion (not wired here).
+   */
+  asset: string;
+  decimals: number;
+  fetchedAt: string;
+}
+
+export interface VaultTvlUnavailable {
+  source: "unavailable";
+  contractAddress: string;
+  asset: string;
+  reason: string;
+  fetchedAt: string;
+}
+
+export type VaultTvlResult = VaultTvlSuccess | VaultTvlUnavailable;
+
+/**
+ * Read the vault's total assets under management via ERC-4626 totalAssets().
+ *
+ * For earnUSD (USDC, 6 decimals): totalAssetsNative ≈ USD value.
+ * For earnETH (ETH, 18 decimals): totalAssetsNative is in ETH; USD conversion
+ *   requires a price feed that is not wired here.
+ *
+ * Never throws; returns { source: "unavailable", reason } on any failure.
+ */
+export async function readVaultTvl(
+  contractAddress: string,
+  asset: string
+): Promise<VaultTvlResult> {
+  const rpcUrl = process.env.ETH_RPC_URL ?? DEFAULT_RPC;
+  const fetchedAt = new Date().toISOString();
+
+  try {
+    // 1. decimals() — needed to convert raw uint256 to human-readable units
+    const decResult = await ethCall(contractAddress, SEL_DECIMALS, rpcUrl);
+    const decimals = Number(decodeUint256(decResult));
+    const safeDecimals = decimals > 0 && decimals <= 30 ? decimals : 18;
+
+    // 2. totalAssets() — ERC-4626 total underlying assets
+    const taResult = await ethCall(contractAddress, SEL_TOTAL_ASSETS, rpcUrl);
+    const rawTotalAssets = decodeUint256(taResult);
+    const totalAssetsNative = Number(rawTotalAssets) / Math.pow(10, safeDecimals);
+
+    return {
+      source: "live_vault_read",
+      contractAddress,
+      totalAssetsNative,
+      asset,
+      decimals: safeDecimals,
+      fetchedAt,
+    };
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : "Unknown error during vault TVL read";
+    return {
+      source: "unavailable",
+      contractAddress,
+      asset,
+      reason,
+      fetchedAt,
+    };
+  }
+}
 
 /**
  * Read the vault share balance and underlying asset value for a given wallet.

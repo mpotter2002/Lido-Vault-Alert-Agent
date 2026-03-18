@@ -1,9 +1,9 @@
 import { VaultPosition } from "./types";
-import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState } from "./domain";
+import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState, LiveTvlState } from "./domain";
 import { generateEnrichedAlerts } from "./alert-engine";
 import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
-import { readWalletPosition } from "./wallet-reader";
+import { readWalletPosition, readVaultTvl } from "./wallet-reader";
 
 function buildNote(benchmarkSources: Map<string, string>): string {
   // Build a note that accurately reflects data provenance.
@@ -59,10 +59,11 @@ export async function buildHealthResponse(
 ): Promise<AgentHealthResponse> {
   const { alerts, benchmarks, allocationSnapshots } = await generateEnrichedAlerts(positions);
 
-  // Attempt live wallet reads for all vaults in parallel.
-  const walletReads = await Promise.all(
-    positions.map((pos) => readWalletPosition(wallet, pos.contractAddress))
-  );
+  // Attempt live wallet reads and live vault TVL reads for all vaults in parallel.
+  const [walletReads, tvlReads] = await Promise.all([
+    Promise.all(positions.map((pos) => readWalletPosition(wallet, pos.contractAddress))),
+    Promise.all(positions.map((pos) => readVaultTvl(pos.contractAddress, pos.asset))),
+  ]);
 
   const vaults: VaultHealthSummary[] = positions.map((pos, idx) => {
     const bm = benchmarks.get(pos.vaultId)!;
@@ -78,6 +79,28 @@ export async function buildHealthResponse(
 
     const read = walletReads[idx];
     let walletPosition: WalletPositionState;
+
+    // Build liveTvl state from on-chain totalAssets() read.
+    const tvlRead = tvlReads[idx];
+    let liveTvl: LiveTvlState;
+    if (tvlRead.source === "live_vault_read") {
+      const isUsd = pos.asset === "USDC";
+      liveTvl = {
+        source: "live_vault_read",
+        totalAssetsNative: tvlRead.totalAssetsNative,
+        asset: tvlRead.asset,
+        note: isUsd
+          ? `Live totalAssets() read at ${tvlRead.fetchedAt}. ${tvlRead.totalAssetsNative.toLocaleString("en-US", { maximumFractionDigits: 0 })} USDC ≈ USD value.`
+          : `Live totalAssets() read at ${tvlRead.fetchedAt}. ${tvlRead.totalAssetsNative.toFixed(4)} ETH (USD value requires price feed — not wired).`,
+      };
+    } else {
+      liveTvl = {
+        source: "unavailable",
+        totalAssetsNative: null,
+        asset: pos.asset,
+        note: `Live totalAssets() read failed: ${tvlRead.reason}. Wire ETH_RPC_URL env var or check the contract address.`,
+      };
+    }
 
     if (read.source === "live_wallet_read") {
       walletPosition = {
@@ -115,6 +138,7 @@ export async function buildHealthResponse(
       health: pos.health,
       currentAPY: pos.currentAPY,
       walletPosition,
+      liveTvl,
       benchmark: bm,
       allocation: alloc,
       recommendation,
@@ -124,16 +148,20 @@ export async function buildHealthResponse(
     };
   });
 
-  // dataMode stays "seeded_demo" because vault-level data (APY, TVL, health,
-  // strategies) is still seeded. Individual walletPosition.source and each
-  // vault's benchmark.freshness.source show per-field live/seeded status.
+  // dataMode: "partial_live" when any live on-chain data succeeded (wallet or TVL reads);
+  // "seeded_demo" when all live reads failed and we're serving only seeded values.
+  const anyLiveTvl = vaults.some((v) => v.liveTvl.source === "live_vault_read");
+  const anyLiveWallet = vaults.some((v) => v.walletPosition.source === "live_wallet_read");
+  const dataMode: "seeded_demo" | "partial_live" =
+    anyLiveTvl || anyLiveWallet ? "partial_live" : "seeded_demo";
+
   const benchmarkSources = new Map<string, string>();
   benchmarks.forEach((bm, vaultId) => benchmarkSources.set(vaultId, bm.freshness.source));
 
   return {
     wallet,
     generatedAt: new Date().toISOString(),
-    dataMode: "seeded_demo" as const,
+    dataMode,
     note: buildNote(benchmarkSources),
     vaults,
   };

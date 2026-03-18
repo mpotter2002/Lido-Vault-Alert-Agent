@@ -8,6 +8,13 @@ export interface VaultPosition {
   vaultName: string;
   asset: string; // "ETH" | "USDC"
   contractAddress: string;
+  /**
+   * Source of vault-level metrics (APY, TVL, health, strategies).
+   * "seeded_demo" — values come from seeded mock data, not a live contract read.
+   * "live"        — values fetched from a live on-chain or API source.
+   * "unavailable" — live read attempted and failed; metrics are absent.
+   */
+  vaultMetricsSource: "seeded_demo" | "live" | "unavailable";
   currentAPY: number; // percent, e.g. 4.2
   apyDelta24h: number; // percent change over 24h, e.g. -1.4
   tvl: number; // total vault TVL in USD

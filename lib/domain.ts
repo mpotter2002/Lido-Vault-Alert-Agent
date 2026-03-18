@@ -94,6 +94,30 @@ export interface WalletPositionState {
 }
 
 // ---------------------------------------------------------------------------
+// Live TVL from ERC-4626 totalAssets() — separate from seeded TVL in position
+// ---------------------------------------------------------------------------
+
+export interface LiveTvlState {
+  /**
+   * "live_vault_read" — fetched from totalAssets() this request.
+   * "unavailable"     — RPC call failed or timed out.
+   */
+  source: "live_vault_read" | "unavailable";
+  /**
+   * Total assets in the vault's native token (ETH for earnETH, USDC for earnUSD).
+   * null when source === "unavailable".
+   */
+  totalAssetsNative: number | null;
+  /**
+   * Asset ticker ("ETH" | "USDC").
+   * For USDC: totalAssetsNative ≈ USD value.
+   * For ETH:  USD value requires a price feed (not wired; totalAssetsNative is in ETH).
+   */
+  asset: string;
+  note: string;
+}
+
+// ---------------------------------------------------------------------------
 // Vault health summary — the canonical MCP-friendly output shape
 // ---------------------------------------------------------------------------
 
@@ -106,6 +130,13 @@ export interface VaultHealthSummary {
   // walletPosition is separate from vault-level metrics.
   // When source = "unavailable" the agent has not yet wired a live wallet read.
   walletPosition: WalletPositionState;
+  /**
+   * Live vault TVL read via ERC-4626 totalAssets(). Separate from the seeded
+   * TVL in VaultPosition (used for internal alert rules). When available, this
+   * is the authoritative TVL for display; when unavailable, the seeded value
+   * in the agent's dataMode note applies.
+   */
+  liveTvl: LiveTvlState;
   benchmark: BenchmarkSnapshot;
   allocation: AllocationSnapshot;
   recommendation: Recommendation;
