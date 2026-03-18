@@ -1,5 +1,15 @@
 import { VaultPosition } from "./types";
 
+// Demo wallet — the address we pretend to monitor
+export const DEMO_WALLET = "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
+
+// ---------------------------------------------------------------------------
+// Scenario 1 — Initial state
+//
+// EarnETH: moderate APY drop, Pendle allocation reduced heavily (→ Morpho).
+// EarnUSD: healthy, with a pending deposit and a spread across all 5 protocols.
+// ---------------------------------------------------------------------------
+
 export const MOCK_POSITIONS: VaultPosition[] = [
   {
     vaultId: "earnETH",
@@ -18,9 +28,12 @@ export const MOCK_POSITIONS: VaultPosition[] = [
     health: "healthy",
     curatorName: "Mellow P2P",
     lastRebalanceHoursAgo: 6,
+    // Pendle PT-stETH reduced sharply → Morpho absorbed
     strategyWeights: [
-      { name: "stETH / wstETH LP", previousWeight: 60, currentWeight: 45 },
-      { name: "wstETH Morpho Supply", previousWeight: 40, currentWeight: 55 },
+      { name: "Morpho wstETH Curated", previousWeight: 35, currentWeight: 50 },
+      { name: "Pendle PT-stETH (Dec)", previousWeight: 40, currentWeight: 25 },
+      { name: "Aave v3 wstETH Supply", previousWeight: 15, currentWeight: 15 },
+      { name: "Gearbox stETH Farming", previousWeight: 10, currentWeight: 10 },
     ],
   },
   {
@@ -40,40 +53,68 @@ export const MOCK_POSITIONS: VaultPosition[] = [
     health: "healthy",
     curatorName: "Mellow Re7",
     lastRebalanceHoursAgo: 18,
+    // All 5 protocols represented
     strategyWeights: [
-      { name: "USDC Aave v3 Supply", previousWeight: 50, currentWeight: 50 },
-      { name: "USDC Morpho Curated", previousWeight: 35, currentWeight: 38 },
-      { name: "Cash Reserve", previousWeight: 15, currentWeight: 12 },
+      { name: "Aave v3 USDC Supply", previousWeight: 40, currentWeight: 40 },
+      { name: "Morpho USDC Curated", previousWeight: 30, currentWeight: 35 },
+      { name: "Pendle PT-USDC (Jun)", previousWeight: 15, currentWeight: 10 },
+      { name: "Maple USDC Pool", previousWeight: 10, currentWeight: 10 },
+      { name: "Gearbox USDC Strategy", previousWeight: 5, currentWeight: 5 },
     ],
   },
 ];
 
-// Simulate a refreshed state with a new scenario
+// ---------------------------------------------------------------------------
+// Scenario 2 — APY recovering, TVL rising, Pendle allocation rebuilt
+// ---------------------------------------------------------------------------
+
 export const MOCK_POSITIONS_REFRESH: VaultPosition[] = [
   {
     ...MOCK_POSITIONS[0],
     currentAPY: 3.1,
     apyDelta24h: 0.3,
-    pendingWithdrawalAgeDays: 4, // still pending but APY recovering
+    pendingWithdrawalAgeDays: 4,
+    strategyWeights: [
+      { name: "Morpho wstETH Curated", previousWeight: 50, currentWeight: 45 },
+      { name: "Pendle PT-stETH (Dec)", previousWeight: 25, currentWeight: 35 },
+      { name: "Aave v3 wstETH Supply", previousWeight: 15, currentWeight: 10 },
+      { name: "Gearbox stETH Farming", previousWeight: 10, currentWeight: 10 },
+    ],
   },
   {
     ...MOCK_POSITIONS[1],
-    tvl: 93_000_000, // closer to cap
+    tvl: 93_000_000, // TVL rising toward cap
     currentAPY: 5.1,
     pendingDepositAmount: 0, // deposit deployed
+    strategyWeights: [
+      { name: "Aave v3 USDC Supply", previousWeight: 40, currentWeight: 38 },
+      { name: "Morpho USDC Curated", previousWeight: 35, currentWeight: 37 },
+      { name: "Pendle PT-USDC (Jun)", previousWeight: 10, currentWeight: 12 },
+      { name: "Maple USDC Pool", previousWeight: 10, currentWeight: 10 },
+      { name: "Gearbox USDC Strategy", previousWeight: 5, currentWeight: 3 },
+    ],
   },
 ];
 
-// Scenario 3: EarnETH vault paused, withdrawal resolved
+// ---------------------------------------------------------------------------
+// Scenario 3 — EarnETH vault paused, withdrawal resolved, EarnUSD healthy
+// ---------------------------------------------------------------------------
+
 export const MOCK_POSITIONS_SCENARIO3: VaultPosition[] = [
   {
     ...MOCK_POSITIONS[0],
     currentAPY: 0,
     apyDelta24h: -2.8,
     health: "paused",
-    pendingWithdrawalAmount: 0, // withdrawal completed
+    pendingWithdrawalAmount: 0,
     pendingWithdrawalAgeDays: null,
     lastRebalanceHoursAgo: null,
+    strategyWeights: [
+      { name: "Morpho wstETH Curated", previousWeight: 50, currentWeight: 50 },
+      { name: "Pendle PT-stETH (Dec)", previousWeight: 25, currentWeight: 25 },
+      { name: "Aave v3 wstETH Supply", previousWeight: 15, currentWeight: 15 },
+      { name: "Gearbox stETH Farming", previousWeight: 10, currentWeight: 10 },
+    ],
   },
   {
     ...MOCK_POSITIONS_REFRESH[1],
@@ -89,7 +130,7 @@ export const MOCK_SCENARIOS = [
 ] as const;
 
 export const SCENARIO_LABELS = [
-  "Initial state",
+  "Initial: APY drop + Pendle shift",
   "APY recovering, TVL rising",
   "EarnETH paused, withdrawal resolved",
 ] as const;

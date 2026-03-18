@@ -1,4 +1,8 @@
 import { VaultPosition, Alert, AlertSeverity } from "./types";
+import { BenchmarkSnapshot, AllocationSnapshot } from "./domain";
+import { getBenchmarkSnapshot } from "./benchmarks";
+import { buildAllocationSnapshot, describeShifts } from "./allocations";
+import { SEEDED_FRESHNESS } from "./benchmarks";
 
 let idCounter = 0;
 function makeId() {
@@ -9,7 +13,25 @@ function ago(hours: number): Date {
   return new Date(Date.now() - hours * 3600 * 1000);
 }
 
-export function generateAlerts(positions: VaultPosition[]): Alert[] {
+const SEVERITY_ORDER: Record<AlertSeverity, number> = {
+  critical: 0,
+  warning: 1,
+  info: 2,
+};
+
+function sortAlerts(alerts: Alert[]): Alert[] {
+  return alerts.sort((a, b) => {
+    const severityDiff = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
+    if (severityDiff !== 0) return severityDiff;
+    return b.timestamp.getTime() - a.timestamp.getTime();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Core position-state alert rules (no external data needed)
+// ---------------------------------------------------------------------------
+
+function positionAlerts(positions: VaultPosition[]): Alert[] {
   const alerts: Alert[] = [];
 
   for (const pos of positions) {
@@ -25,8 +47,8 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
           vaultName: pos.vaultName,
           type: "apy_drop",
           severity: "warning",
-          title: `APY dropped ${Math.abs(pos.apyDelta24h).toFixed(1)}% in 24h`,
-          summary: `Your ${pos.vaultName} yield fell from ${prevFormatted}% to ${pos.currentAPY.toFixed(1)}% APY over the last 24 hours. This follows a strategy rebalance by the vault curator (${pos.curatorName}). No immediate action needed — yield is expected to stabilize as the new allocation settles.`,
+          title: `APY dropped ${Math.abs(pos.apyDelta24h).toFixed(1)}pp in 24h`,
+          summary: `Your ${pos.vaultName} yield fell from ${prevFormatted}% to ${pos.currentAPY.toFixed(1)}% APY over the last 24 hours. This follows a strategy rebalance by the vault curator (${pos.curatorName}). No immediate action needed — yield is expected to stabilise as the new allocation settles.`,
           technicalDetail: buildStrategyDetail(pos),
           actionRequired: false,
           suggestedAction: null,
@@ -36,25 +58,27 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
       }
     }
 
-    // APY recovery after drop
+    // APY recovery >= 10% relative in 24h
     if (pos.apyDelta24h > 0) {
       const prevAPY = pos.currentAPY - pos.apyDelta24h;
-      const relGain = pos.apyDelta24h / prevAPY;
-      if (relGain >= 0.1) {
-        alerts.push({
-          id: makeId(),
-          vaultId: pos.vaultId,
-          vaultName: pos.vaultName,
-          type: "apy_recovery",
-          severity: "info",
-          title: `APY recovering — now ${pos.currentAPY.toFixed(1)}%`,
-          summary: `Your ${pos.vaultName} yield has increased by ${pos.apyDelta24h.toFixed(1)}% over the last 24 hours and is now ${pos.currentAPY.toFixed(1)}% APY. The curator rebalance appears to be settling positively.`,
-          technicalDetail: buildStrategyDetail(pos),
-          actionRequired: false,
-          suggestedAction: null,
-          timestamp: ago(1),
-          dismissed: false,
-        });
+      if (prevAPY > 0) {
+        const relGain = pos.apyDelta24h / prevAPY;
+        if (relGain >= 0.1) {
+          alerts.push({
+            id: makeId(),
+            vaultId: pos.vaultId,
+            vaultName: pos.vaultName,
+            type: "apy_recovery",
+            severity: "info",
+            title: `APY recovering — now ${pos.currentAPY.toFixed(1)}%`,
+            summary: `Your ${pos.vaultName} yield has increased by ${pos.apyDelta24h.toFixed(1)}pp over the last 24 hours and is now ${pos.currentAPY.toFixed(1)}% APY. The curator rebalance appears to be settling positively.`,
+            technicalDetail: buildStrategyDetail(pos),
+            actionRequired: false,
+            suggestedAction: null,
+            timestamp: ago(1),
+            dismissed: false,
+          });
+        }
       }
     }
 
@@ -68,11 +92,12 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
           vaultName: pos.vaultName,
           type: "withdrawal_delay_extended",
           severity: "warning",
-          title: `Withdrawal pending ${days} days`,
-          summary: `Your withdrawal request for ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} has been pending for ${days} days, which is longer than typical. The curator may be processing a large batch or rebalancing liquidity. You may want to check the Lido Earn dashboard for curator status.`,
+          title: `Withdrawal pending ${days} days — extended`,
+          summary: `Your withdrawal request for ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} has been pending for ${days} days, longer than typical. The curator may be processing a large redemption batch. Check the Lido Earn dashboard for curator status.`,
           technicalDetail: `Pending redemption: ${pos.pendingWithdrawalAmount} ${pos.asset}. Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}.`,
           actionRequired: true,
-          suggestedAction: "Check the Lido Earn app for an updated withdrawal status or curator announcement.",
+          suggestedAction:
+            "Check the Lido Earn app for an updated withdrawal status or curator announcement.",
           timestamp: ago(days * 24 - 1),
           dismissed: false,
         });
@@ -84,7 +109,7 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
           type: "withdrawal_delay",
           severity: "warning",
           title: `Withdrawal pending ${days} days`,
-          summary: `Your withdrawal request for ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} is still being processed. The ${pos.curatorName} curator is managing redemptions in the current batch cycle. This is normal — most withdrawals complete within 5–7 days.`,
+          summary: `Your withdrawal request for ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} is still being processed. The ${pos.curatorName} curator is managing redemptions in the current batch cycle. Most withdrawals complete within 5–7 days.`,
           technicalDetail: `Pending redemption: ${pos.pendingWithdrawalAmount} ${pos.asset}. Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}. Last rebalance: ${pos.lastRebalanceHoursAgo}h ago.`,
           actionRequired: false,
           suggestedAction: null,
@@ -94,7 +119,7 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
       }
     }
 
-    // Deposit queued (not yet deployed)
+    // Deposit queued
     if (pos.pendingDepositAmount > 0) {
       alerts.push({
         id: makeId(),
@@ -103,8 +128,8 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
         type: "deposit_queued",
         severity: "info",
         title: `${pos.pendingDepositAmount} ${pos.asset} deposit queued`,
-        summary: `Your recent deposit of ${pos.pendingDepositAmount} ${pos.asset} into ${pos.vaultName} is queued and not yet earning yield. The ${pos.curatorName} curator will deploy it into active strategies at the next rebalance. This typically takes 1–24 hours.`,
-        technicalDetail: `Pending deposit: ${pos.pendingDepositAmount} ${pos.asset}. Next curator rebalance expected within ~${24 - (pos.lastRebalanceHoursAgo ?? 0)}h based on last rebalance ${pos.lastRebalanceHoursAgo}h ago.`,
+        summary: `Your recent deposit of ${pos.pendingDepositAmount} ${pos.asset} into ${pos.vaultName} is queued and not yet earning yield. The ${pos.curatorName} curator will deploy it at the next rebalance (typically 1–24 hours).`,
+        technicalDetail: `Pending deposit: ${pos.pendingDepositAmount} ${pos.asset}. Next rebalance expected within ~${24 - (pos.lastRebalanceHoursAgo ?? 0)}h.`,
         actionRequired: false,
         suggestedAction: null,
         timestamp: ago(3),
@@ -122,7 +147,7 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
         type: "tvl_cap_approaching",
         severity: "warning",
         title: `${pos.vaultName} is ${(tvlUtilization * 100).toFixed(0)}% full`,
-        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected. If you plan to add more, consider acting soon or depositing into an alternate vault.`,
+        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.`,
         technicalDetail: `Current TVL: $${(pos.tvl / 1e6).toFixed(1)}M. Cap: $${(pos.tvlCapUSD / 1e6).toFixed(0)}M. Utilization: ${(tvlUtilization * 100).toFixed(1)}%.`,
         actionRequired: false,
         suggestedAction: "Deposit soon if you plan to increase your position, or monitor for a cap raise.",
@@ -140,10 +165,11 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
         type: "vault_unhealthy",
         severity: "critical",
         title: `${pos.vaultName} vault health degraded`,
-        summary: `The ${pos.vaultName} vault is reporting a degraded health status. This may indicate a strategy issue or oracle problem. New deposits are not recommended until the issue is resolved. Your current position is still intact.`,
+        summary: `The ${pos.vaultName} vault is reporting a degraded health status. This may indicate a strategy issue or oracle problem. New deposits are not recommended. Your current position is still intact.`,
         technicalDetail: `Vault health check returned: ${pos.health}. Curator: ${pos.curatorName}.`,
         actionRequired: true,
-        suggestedAction: "Monitor Lido Earn announcements. Consider initiating a withdrawal if the status persists.",
+        suggestedAction:
+          "Monitor Lido Earn announcements. Consider initiating a withdrawal if the status persists.",
         timestamp: ago(0.5),
         dismissed: false,
       });
@@ -157,10 +183,11 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
         type: "vault_pause",
         severity: "critical",
         title: `${pos.vaultName} is paused`,
-        summary: `The ${pos.vaultName} vault has been paused. Deposits and withdrawals are temporarily halted. This is a safety measure taken by the curator or Lido governance. Your funds are not at risk, but you cannot move them until the pause is lifted.`,
+        summary: `The ${pos.vaultName} vault has been paused. Deposits and withdrawals are temporarily halted as a safety measure. Your funds are not at risk, but you cannot move them until the pause is lifted.`,
         technicalDetail: `Vault ${pos.contractAddress} is in paused state. Curator: ${pos.curatorName}.`,
         actionRequired: true,
-        suggestedAction: "Follow Lido Earn channels for a resolution timeline. No on-chain action is possible until unpaused.",
+        suggestedAction:
+          "Follow Lido Earn channels for a resolution timeline. No on-chain action is possible until unpaused.",
         timestamp: ago(0.25),
         dismissed: false,
       });
@@ -179,7 +206,7 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
           type: "curator_rebalance",
           severity: "info",
           title: `Curator rebalanced strategy ${pos.lastRebalanceHoursAgo}h ago`,
-          summary: `The ${pos.curatorName} curator rebalanced the ${pos.vaultName} strategy ${pos.lastRebalanceHoursAgo} hours ago, shifting asset weights across underlying protocols. This is routine and no action is needed. Your yield may fluctuate briefly as the allocation settles.`,
+          summary: `The ${pos.curatorName} curator rebalanced the ${pos.vaultName} strategy ${pos.lastRebalanceHoursAgo} hours ago. Your yield may fluctuate briefly as the allocation settles. No action needed.`,
           technicalDetail: buildStrategyDetail(pos),
           actionRequired: false,
           suggestedAction: null,
@@ -190,17 +217,174 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
     }
   }
 
-  // Sort: critical first, then warning, then info; newest within each tier
-  const order: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 };
-  return alerts.sort((a, b) => {
-    const severityDiff = order[a.severity] - order[b.severity];
-    if (severityDiff !== 0) return severityDiff;
-    return b.timestamp.getTime() - a.timestamp.getTime();
-  });
+  return alerts;
 }
 
+// ---------------------------------------------------------------------------
+// Benchmark-relative alert rules
+// ---------------------------------------------------------------------------
+
+function benchmarkAlerts(
+  positions: VaultPosition[],
+  benchmarks: Map<string, BenchmarkSnapshot>
+): Alert[] {
+  const alerts: Alert[] = [];
+
+  for (const pos of positions) {
+    const bm = benchmarks.get(pos.vaultId);
+    if (!bm) continue;
+
+    if (bm.belowFloor) {
+      const spreadAbs = Math.abs(bm.spreadBps);
+      const dataNote =
+        bm.freshness.source === "seeded"
+          ? ` (benchmark value is seeded demo data, not live)`
+          : "";
+      alerts.push({
+        id: makeId(),
+        vaultId: pos.vaultId,
+        vaultName: pos.vaultName,
+        type: "benchmark_underperformance",
+        severity: "warning",
+        title: `${pos.vaultName} yield trailing ${bm.benchmarkName} by ${spreadAbs}bps`,
+        summary:
+          `${pos.vaultName} is currently earning ${pos.currentAPY.toFixed(2)}% APY, which is ` +
+          `${spreadAbs}bps below the ${bm.benchmarkName} (${bm.benchmarkAPY.toFixed(2)}%)${dataNote}. ` +
+          `This exceeds the acceptable floor of ${Math.abs(bm.floorBps)}bps. ` +
+          `New deposits are not recommended until yield recovers.`,
+        technicalDetail:
+          `Vault APY: ${bm.vaultAPY.toFixed(2)}%. Benchmark: ${bm.benchmarkName} = ${bm.benchmarkAPY.toFixed(2)}%. ` +
+          `Spread: ${bm.spreadBps}bps (floor: ${bm.floorBps}bps). ` +
+          `Benchmark source: ${bm.freshness.source} (as of ${bm.freshness.asOf}).`,
+        actionRequired: false,
+        suggestedAction: "Monitor for curator rebalance toward higher-yielding protocols.",
+        timestamp: ago(1),
+        dismissed: false,
+      });
+    } else if (bm.spreadBps >= 0 && pos.apyDelta24h > 0) {
+      // Recovering above benchmark after a previous drop
+      alerts.push({
+        id: makeId(),
+        vaultId: pos.vaultId,
+        vaultName: pos.vaultName,
+        type: "benchmark_recovery",
+        severity: "info",
+        title: `${pos.vaultName} yield back above ${bm.benchmarkName}`,
+        summary:
+          `${pos.vaultName} APY (${pos.currentAPY.toFixed(2)}%) has recovered and is now ` +
+          `+${bm.spreadBps}bps above ${bm.benchmarkName} (${bm.benchmarkAPY.toFixed(2)}%). ` +
+          `Yield conditions are favourable.`,
+        technicalDetail:
+          `Vault APY: ${bm.vaultAPY.toFixed(2)}%. Benchmark: ${bm.benchmarkAPY.toFixed(2)}%. Spread: +${bm.spreadBps}bps.`,
+        actionRequired: false,
+        suggestedAction: null,
+        timestamp: ago(1),
+        dismissed: false,
+      });
+    }
+  }
+
+  return alerts;
+}
+
+// ---------------------------------------------------------------------------
+// Allocation-shift alert rules
+// ---------------------------------------------------------------------------
+
+function allocationAlerts(
+  positions: VaultPosition[],
+  allocationSnapshots: Map<string, AllocationSnapshot>
+): Alert[] {
+  const alerts: Alert[] = [];
+
+  for (const pos of positions) {
+    const snap = allocationSnapshots.get(pos.vaultId);
+    if (!snap || !snap.significantShifts.length) continue;
+
+    const shiftDesc = describeShifts(snap.significantShifts);
+    const protocols = snap.significantShifts
+      .map((s) => s.protocol)
+      .filter((p, i, arr) => arr.indexOf(p) === i)
+      .join(", ");
+
+    alerts.push({
+      id: makeId(),
+      vaultId: pos.vaultId,
+      vaultName: pos.vaultName,
+      type: "allocation_shift",
+      severity: "info",
+      title: `Protocol allocation shifted: ${protocols}`,
+      summary:
+        `The ${pos.curatorName} curator adjusted ${pos.vaultName} protocol exposure. ` +
+        `${shiftDesc}. ` +
+        `Yield may fluctuate for 12–24h as the new allocation settles. No action needed.`,
+      technicalDetail:
+        `Allocation changes: ${shiftDesc}. ` +
+        `Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}. ` +
+        `Source: ${snap.freshness.source}.`,
+      actionRequired: false,
+      suggestedAction: null,
+      timestamp: ago(pos.lastRebalanceHoursAgo ?? 6),
+      dismissed: false,
+    });
+  }
+
+  return alerts;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * generateAlerts — simple form, uses only position state.
+ * Backward-compatible with the existing UI and original /api/alerts route.
+ */
+export function generateAlerts(positions: VaultPosition[]): Alert[] {
+  return sortAlerts(positionAlerts(positions));
+}
+
+/**
+ * generateEnrichedAlerts — full form, incorporates benchmark comparison and
+ * allocation tracking alongside position-state alerts.
+ * Used by /api/health, /api/alerts (enriched), and preview formatters.
+ */
+export function generateEnrichedAlerts(positions: VaultPosition[]): {
+  alerts: Alert[];
+  benchmarks: Map<string, BenchmarkSnapshot>;
+  allocationSnapshots: Map<string, AllocationSnapshot>;
+} {
+  const benchmarks = new Map<string, BenchmarkSnapshot>();
+  const allocationSnapshots = new Map<string, AllocationSnapshot>();
+
+  for (const pos of positions) {
+    benchmarks.set(pos.vaultId, getBenchmarkSnapshot(pos.vaultId, pos.currentAPY));
+    allocationSnapshots.set(
+      pos.vaultId,
+      buildAllocationSnapshot(pos.vaultId, pos.strategyWeights, SEEDED_FRESHNESS)
+    );
+  }
+
+  const all = [
+    ...positionAlerts(positions),
+    ...benchmarkAlerts(positions, benchmarks),
+    ...allocationAlerts(positions, allocationSnapshots),
+  ];
+
+  return {
+    alerts: sortAlerts(all),
+    benchmarks,
+    allocationSnapshots,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function buildStrategyDetail(pos: VaultPosition): string {
-  if (!pos.strategyWeights.length) return `Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}.`;
+  if (!pos.strategyWeights.length)
+    return `Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}.`;
   const shifts = pos.strategyWeights
     .map((w) => `${w.name}: ${w.previousWeight}% → ${w.currentWeight}%`)
     .join(", ");
