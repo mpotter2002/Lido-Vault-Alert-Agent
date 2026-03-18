@@ -2,38 +2,54 @@ import { VaultId } from "./types";
 import { BenchmarkSnapshot, SourceFreshness } from "./domain";
 
 // ---------------------------------------------------------------------------
-// Seeded fallback reference values
+// Benchmark reference metadata (floor thresholds only — no seeded APY fallback)
 //
-// Used when live fetches fail. Represent early-2025 market conditions.
-// Every caller should use fetchBenchmark() which attempts live reads first
-// and only falls through to these values with an explicit "seeded" label.
+// Seeded APY values are removed from the production fallback path.
+// They only appear in the explicitly-marked seeded_demo path below.
 // ---------------------------------------------------------------------------
 
 interface BenchmarkRef {
   name: string;
-  fallbackApy: number;
   /** Minimum acceptable spread vs benchmark in bps. Negative = vault is allowed
    *  to trail benchmark by this many bps before an alert fires. */
   floorBps: number;
+  /** Seeded reference rate for demo mode only — not used in production paths. */
+  demoApy: number;
 }
 
 const BENCHMARK_REFS: Record<VaultId, BenchmarkRef> = {
   earnETH: {
     name: "stETH APY (Lido)",
-    fallbackApy: 3.62, // stETH native staking ~3.6% APY (early 2025)
-    floorBps: -50,    // alert if vault trails stETH by > 50 bps
+    floorBps: -50, // alert if vault trails stETH by > 50 bps
+    demoApy: 3.62, // early-2025 stETH reference — demo mode only
   },
   earnUSD: {
     name: "Aave v3 USDC Supply Rate",
-    fallbackApy: 4.85, // Aave v3 USDC supply ~4.85% APY (early 2025)
-    floorBps: -30,     // alert if vault trails Aave by > 30 bps
+    floorBps: -30,  // alert if vault trails Aave by > 30 bps
+    demoApy: 4.85,  // early-2025 Aave v3 USDC reference — demo mode only
   },
 };
 
-// Exported for use as freshness label on allocation snapshots (which are
-// always seeded — they come from mock strategy weights, not live contract reads).
+// ---------------------------------------------------------------------------
+// Last-known-good cache
+//
+// Populated on every successful live fetch. When the live fetch subsequently
+// fails, we return the cached value labeled "cached_last_known_good" so
+// consumers can distinguish it from a fresh live read.
+//
+// This is an in-process Map — it survives across requests within the same
+// Next.js worker process. Next.js HTTP-level revalidate (5 min) provides
+// additional deduplication at the fetch layer.
+// ---------------------------------------------------------------------------
+
+const _lkgCache = new Map<VaultId, { apy: number; asOf: string }>();
+
+// ---------------------------------------------------------------------------
+// Seeded freshness for allocation snapshots (always demo — no live read wired)
+// ---------------------------------------------------------------------------
+
 export const SEEDED_FRESHNESS: SourceFreshness = {
-  source: "seeded",
+  source: "seeded_demo",
   asOf: "2025-03-01T00:00:00Z",
   note:
     "Seeded demo values (strategy weights are not read from a live contract). " +
@@ -124,49 +140,98 @@ async function fetchLiveAaveUsdcAPY(): Promise<{ apy: number; asOf: string } | n
 }
 
 // ---------------------------------------------------------------------------
-// Synchronous snapshot — seeded only, for backward-compat internal use
+// Shared snapshot builder
 // ---------------------------------------------------------------------------
 
-/**
- * Compute a benchmark snapshot synchronously from seeded fallback data.
- * Clearly labeled source = "seeded". Prefer fetchBenchmark() in async contexts.
- */
-export function getBenchmarkSnapshot(
+function buildSnapshot(
   vaultId: VaultId,
-  vaultAPY: number
+  vaultAPY: number,
+  benchmarkAPY: number,
+  freshness: SourceFreshness
 ): BenchmarkSnapshot {
   const ref = BENCHMARK_REFS[vaultId];
-  const spreadBps = Math.round((vaultAPY - ref.fallbackApy) * 100);
+  const spreadBps = Math.round((vaultAPY - benchmarkAPY) * 100);
   return {
     vaultId,
     benchmarkName: ref.name,
-    benchmarkAPY: ref.fallbackApy,
+    benchmarkAPY,
     vaultAPY,
     spreadBps,
     floorBps: ref.floorBps,
     belowFloor: spreadBps < ref.floorBps,
+    freshness,
+  };
+}
+
+function buildUnavailableSnapshot(vaultId: VaultId, vaultAPY: number): BenchmarkSnapshot {
+  const ref = BENCHMARK_REFS[vaultId];
+  // benchmarkAPY/spreadBps/belowFloor are meaningless when unavailable.
+  // belowFloor = false so no false-positive alerts fire; consumers must
+  // check freshness.source === "unavailable" before trusting comparison fields.
+  return {
+    vaultId,
+    benchmarkName: ref.name,
+    benchmarkAPY: 0,
+    vaultAPY,
+    spreadBps: 0,
+    floorBps: ref.floorBps,
+    belowFloor: false,
     freshness: {
-      source: "seeded",
-      asOf: "2025-03-01T00:00:00Z",
+      source: "unavailable",
+      asOf: new Date().toISOString(),
       note:
-        `Seeded fallback (early-2025 conditions). ` +
-        (vaultId === "earnETH"
-          ? "Live fetch was not attempted; use fetchBenchmark() for live reads."
-          : "Live fetch was not attempted; use fetchBenchmark() for live reads."),
+        vaultId === "earnETH"
+          ? "Benchmark unavailable — live fetch from Lido staking-stats API failed and no cached value exists."
+          : "Benchmark unavailable — live fetch from DeFiLlama yields API failed and no cached value exists.",
     },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Async benchmark fetch — attempts live read, falls back to seeded
+// Synchronous snapshot — uses last-known-good cache, or returns unavailable
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a benchmark snapshot synchronously.
+ *
+ * Fallback order:
+ *   1. cached_last_known_good — last value from a successful live fetch
+ *   2. unavailable            — no cached value; comparison fields are zeroed
+ *
+ * Prefer fetchBenchmark() in async contexts so the cache stays warm.
+ * Never returns seeded_demo — seeded data requires an explicit demo-mode call.
+ */
+export function getBenchmarkSnapshot(
+  vaultId: VaultId,
+  vaultAPY: number
+): BenchmarkSnapshot {
+  const cached = _lkgCache.get(vaultId);
+  if (cached) {
+    return buildSnapshot(vaultId, vaultAPY, cached.apy, {
+      source: "cached_last_known_good",
+      asOf: cached.asOf,
+      note:
+        `Stale cached value from last successful live fetch (${cached.asOf}). ` +
+        `Live fetch was not attempted; use fetchBenchmark() for a fresh read.`,
+    });
+  }
+  return buildUnavailableSnapshot(vaultId, vaultAPY);
+}
+
+// ---------------------------------------------------------------------------
+// Async benchmark fetch — live → cached_last_known_good → unavailable
 // ---------------------------------------------------------------------------
 
 /**
  * Fetch a benchmark snapshot, attempting a live API read first.
  *
- * freshness.source on the returned snapshot:
- *   "live"   — value came from the live API (Lido / DeFiLlama) at freshness.asOf
- *   "seeded" — live fetch failed; value is a seeded early-2025 fallback
+ * Fallback order:
+ *   1. live                   — value fetched from the live API this request
+ *   2. cached_last_known_good — live fetch failed; last successful real value (stale)
+ *   3. unavailable            — live fetch failed and no cached value exists
+ *
+ * seeded_demo values are NEVER returned here — they only appear via
+ * getBenchmarkSnapshotForDemo() which must be called explicitly.
  *
  * Live sources:
  *   EarnETH  → Lido staking-stats API (7-day stETH APY SMA)
@@ -176,8 +241,6 @@ export async function fetchBenchmark(
   vaultId: VaultId,
   vaultAPY: number
 ): Promise<BenchmarkSnapshot> {
-  const ref = BENCHMARK_REFS[vaultId];
-
   let liveRate: { apy: number; asOf: string } | null = null;
   if (vaultId === "earnETH") {
     liveRate = await fetchLiveStEthAPY();
@@ -186,43 +249,54 @@ export async function fetchBenchmark(
   }
 
   if (liveRate !== null) {
-    const spreadBps = Math.round((vaultAPY - liveRate.apy) * 100);
-    return {
-      vaultId,
-      benchmarkName: ref.name,
-      benchmarkAPY: liveRate.apy,
-      vaultAPY,
-      spreadBps,
-      floorBps: ref.floorBps,
-      belowFloor: spreadBps < ref.floorBps,
-      freshness: {
-        source: "live",
-        asOf: liveRate.asOf,
-        note:
-          vaultId === "earnETH"
-            ? "Live 7-day SMA fetched from Lido staking-stats API (eth-api.lido.fi)."
-            : "Live supply APY fetched from DeFiLlama yields API (Aave v3 USDC, Ethereum, highest-TVL pool).",
-      },
-    };
-  }
-
-  // Live fetch failed — fall back to seeded values, labeled explicitly
-  const spreadBps = Math.round((vaultAPY - ref.fallbackApy) * 100);
-  return {
-    vaultId,
-    benchmarkName: ref.name,
-    benchmarkAPY: ref.fallbackApy,
-    vaultAPY,
-    spreadBps,
-    floorBps: ref.floorBps,
-    belowFloor: spreadBps < ref.floorBps,
-    freshness: {
-      source: "seeded",
-      asOf: "2025-03-01T00:00:00Z",
+    // Warm the cache on every successful fetch.
+    _lkgCache.set(vaultId, liveRate);
+    return buildSnapshot(vaultId, vaultAPY, liveRate.apy, {
+      source: "live",
+      asOf: liveRate.asOf,
       note:
         vaultId === "earnETH"
-          ? "Seeded fallback (early-2025 conditions). Live fetch from Lido staking-stats API failed or timed out."
-          : "Seeded fallback (early-2025 conditions). Live fetch from DeFiLlama yields API failed or timed out.",
-    },
-  };
+          ? "Live 7-day SMA fetched from Lido staking-stats API (eth-api.lido.fi)."
+          : "Live supply APY fetched from DeFiLlama yields API (Aave v3 USDC, Ethereum, highest-TVL pool).",
+    });
+  }
+
+  // Live fetch failed — try last-known-good cache before declaring unavailable.
+  const cached = _lkgCache.get(vaultId);
+  if (cached) {
+    return buildSnapshot(vaultId, vaultAPY, cached.apy, {
+      source: "cached_last_known_good",
+      asOf: cached.asOf,
+      note:
+        vaultId === "earnETH"
+          ? `Stale cached value from last successful Lido API fetch (${cached.asOf}). Live fetch failed or timed out.`
+          : `Stale cached value from last successful DeFiLlama API fetch (${cached.asOf}). Live fetch failed or timed out.`,
+    });
+  }
+
+  // No live data and no cache — return unavailable; do not substitute seeded values.
+  return buildUnavailableSnapshot(vaultId, vaultAPY);
+}
+
+// ---------------------------------------------------------------------------
+// Demo-only snapshot — seeded values, must be called explicitly
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a benchmark snapshot using seeded demo values.
+ * ONLY call this from explicitly-flagged demo paths (e.g. mock scenario routes).
+ * Never use this as a silent production fallback.
+ */
+export function getBenchmarkSnapshotForDemo(
+  vaultId: VaultId,
+  vaultAPY: number
+): BenchmarkSnapshot {
+  const ref = BENCHMARK_REFS[vaultId];
+  return buildSnapshot(vaultId, vaultAPY, ref.demoApy, {
+    source: "seeded_demo",
+    asOf: "2025-03-01T00:00:00Z",
+    note:
+      `Seeded demo value (early-2025 ${vaultId === "earnETH" ? "stETH" : "Aave v3 USDC"} reference rate). ` +
+      `This is explicit demo mode — not a live or cached value.`,
+  });
 }

@@ -36,8 +36,10 @@ export async function GET(request: Request) {
   });
 
   // Attach benchmark freshness info to the response envelope.
-  // freshness.source = "live" means the value was fetched from Lido/DeFiLlama this request.
-  // freshness.source = "seeded" means the live fetch failed; value is an early-2025 fallback.
+  // freshness.source = "live"                  — fetched from Lido/DeFiLlama this request
+  // freshness.source = "cached_last_known_good" — live fetch failed; using last real cached value (stale)
+  // freshness.source = "unavailable"            — live fetch failed and no cache; comparison suppressed
+  // freshness.source = "seeded_demo"            — explicit demo mode only (not a production fallback)
   const benchmarkMeta: Record<string, object> = {};
   benchmarks.forEach((bm, vaultId) => {
     benchmarkMeta[vaultId] = {
@@ -85,8 +87,9 @@ export async function GET(request: Request) {
     dataMode: "seeded_demo",
     note:
       "Vault state (APY, TVL, health, strategies) is seeded demo data. " +
-      "Benchmark APYs are attempted live (Lido staking-stats API / DeFiLlama yields API) " +
-      "and fall back to seeded early-2025 values if the fetch fails. " +
+      "Benchmark APYs are attempted live (Lido staking-stats API / DeFiLlama yields API). " +
+      "On failure: last-known-good cached real value (cached_last_known_good) → unavailable. " +
+      "seeded_demo values are never used as a silent fallback. " +
       "See benchmarks[vaultId].freshness.source for the actual outcome per vault.",
     agentSummary,
     benchmarks: benchmarkMeta,

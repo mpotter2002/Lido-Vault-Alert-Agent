@@ -5,7 +5,11 @@ import { VaultId, VaultHealth } from "./types";
 // whether they're looking at live data or a seeded placeholder.
 // ---------------------------------------------------------------------------
 
-export type SourceStatus = "live" | "seeded" | "unavailable";
+export type SourceStatus =
+  | "live"               // value fetched from the live API this request
+  | "cached_last_known_good" // live fetch failed; using last successful real value (marked stale)
+  | "unavailable"        // live fetch failed and no cached value exists
+  | "seeded_demo";       // explicit demo/test data — only used when demo mode is active
 
 export interface SourceFreshness {
   source: SourceStatus;
@@ -114,7 +118,7 @@ export interface VaultHealthSummary {
 export interface AgentHealthResponse {
   wallet: string;
   generatedAt: string;
-  dataMode: "seeded_demo" | "live";
+  dataMode: "seeded_demo" | "live" | "partial_live";
   note: string;
   vaults: VaultHealthSummary[];
 }

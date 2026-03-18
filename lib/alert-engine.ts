@@ -250,10 +250,16 @@ function benchmarkAlerts(
     const bm = benchmarks.get(pos.vaultId);
     if (!bm) continue;
 
+    // Skip benchmark alerts entirely when the value is unavailable — we have
+    // no basis for comparison and must not fire false-positive warnings.
+    if (bm.freshness.source === "unavailable") continue;
+
     if (bm.belowFloor) {
       const spreadAbs = Math.abs(bm.spreadBps);
       const dataNote =
-        bm.freshness.source === "seeded"
+        bm.freshness.source === "cached_last_known_good"
+          ? ` (benchmark is stale — last cached value from ${bm.freshness.asOf})`
+          : bm.freshness.source === "seeded_demo"
           ? ` (benchmark value is seeded demo data, not live)`
           : "";
       alerts.push({
@@ -366,8 +372,10 @@ export function generateAlerts(positions: VaultPosition[]): Alert[] {
  * Used by /api/health, /api/alerts (enriched), and preview formatters.
  *
  * Benchmark values are fetched live (Lido staking-stats API for EarnETH,
- * DeFiLlama yields API for EarnUSD) and fall back to seeded early-2025
- * values if the live fetch fails. Check freshness.source on each
+ * DeFiLlama yields API for EarnUSD). Fallback order on failure:
+ *   1. cached_last_known_good — last real value from a prior successful fetch
+ *   2. unavailable            — no live data and no cache; comparison suppressed
+ * seeded_demo values are never used here. Check freshness.source on each
  * BenchmarkSnapshot to know which path was taken.
  */
 export async function generateEnrichedAlerts(positions: VaultPosition[]): Promise<{
@@ -378,7 +386,7 @@ export async function generateEnrichedAlerts(positions: VaultPosition[]): Promis
   const benchmarks = new Map<string, BenchmarkSnapshot>();
   const allocationSnapshots = new Map<string, AllocationSnapshot>();
 
-  // Fetch benchmarks in parallel; each call attempts live then falls back to seeded.
+  // Fetch benchmarks in parallel; each call attempts live → cached_last_known_good → unavailable.
   const benchmarkResults = await Promise.all(
     positions.map((pos) => fetchBenchmark(pos.vaultId, pos.currentAPY))
   );
@@ -406,8 +414,9 @@ export async function generateEnrichedAlerts(positions: VaultPosition[]): Promis
 }
 
 /**
- * generateEnrichedAlertsSync — synchronous form using seeded benchmark data only.
- * Use when you cannot await. All benchmark freshness will be labeled "seeded".
+ * generateEnrichedAlertsSync — synchronous form.
+ * Uses the last-known-good benchmark cache if available, otherwise unavailable.
+ * No seeded_demo values are returned — benchmark alerts are suppressed when unavailable.
  * @internal — prefer generateEnrichedAlerts() in async contexts.
  */
 export function generateEnrichedAlertsSync(positions: VaultPosition[]): {

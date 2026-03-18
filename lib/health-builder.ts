@@ -6,22 +6,23 @@ import { SEEDED_FRESHNESS } from "./benchmarks";
 import { readWalletPosition } from "./wallet-reader";
 
 function buildNote(benchmarkSources: Map<string, string>): string {
-  // Build a note that accurately reflects what was read live vs what is seeded.
+  // Build a note that accurately reflects data provenance.
   const bmLines: string[] = [];
   benchmarkSources.forEach((source, vaultId) => {
+    const api = vaultId === "earnETH" ? "Lido staking-stats API" : "DeFiLlama yields API";
     if (source === "live") {
-      bmLines.push(
-        `${vaultId} benchmark: live (${
-          vaultId === "earnETH" ? "Lido staking-stats API" : "DeFiLlama yields API"
-        })`
-      );
+      bmLines.push(`${vaultId} benchmark: live (${api})`);
+    } else if (source === "cached_last_known_good") {
+      bmLines.push(`${vaultId} benchmark: stale cached value — live fetch failed, using last successful real read`);
+    } else if (source === "unavailable") {
+      bmLines.push(`${vaultId} benchmark: unavailable — live fetch failed and no cached value exists; benchmark alerts suppressed`);
     } else {
-      bmLines.push(`${vaultId} benchmark: seeded fallback (early-2025 conditions — live fetch failed)`);
+      bmLines.push(`${vaultId} benchmark: seeded demo value (explicit demo mode)`);
     }
   });
   const bmSummary = bmLines.length
     ? `Benchmark APYs — ${bmLines.join("; ")}. `
-    : "Benchmark values are seeded reference rates. ";
+    : "Benchmark values are unavailable. ";
 
   return (
     "Vault-level metrics (APY, TVL, health, allocation) are seeded demo data. " +
@@ -33,7 +34,7 @@ function buildNote(benchmarkSources: Map<string, string>): string {
 }
 
 const VAULT_DATA_FRESHNESS: SourceFreshness = {
-  source: "seeded",
+  source: "seeded_demo",
   asOf: new Date().toISOString(),
   note:
     "Vault state (APY, TVL, health, strategies) is seeded demo data. " +

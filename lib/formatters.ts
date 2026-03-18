@@ -122,9 +122,10 @@ export function composeTelegramMessage(
   }
 
   // Data source disclaimer
-  const isSeeded = vaultSummaries[0]?.freshness.source === "seeded";
-  const dataMode: "seeded_demo" | "live" = isSeeded ? "seeded_demo" : "live";
-  lines.push(isSeeded ? "⚠️ _Vault state: seeded demo data_" : "✅ _Vault state: live_");
+  const vaultSource = vaultSummaries[0]?.freshness.source;
+  const isSeededDemo = vaultSource === "seeded_demo";
+  const dataMode: "seeded_demo" | "live" | "partial_live" = isSeededDemo ? "seeded_demo" : "live";
+  lines.push(isSeededDemo ? "⚠️ _Vault state: seeded demo data_" : "✅ _Vault state: live_");
   lines.push(`🤖 _Lido Vault Alert Agent_`);
 
   const text = lines.join("\n");
@@ -244,9 +245,9 @@ export function formatEmailAlert(
   }
 
   // Data source note
-  const dataSource = vaultSummaries[0]?.freshness.source ?? "seeded";
+  const dataSource = vaultSummaries[0]?.freshness.source ?? "seeded_demo";
   bodyLines.push(`DATA SOURCE: ${dataSource.toUpperCase()}`);
-  if (dataSource === "seeded") {
+  if (dataSource === "seeded_demo") {
     bodyLines.push("NOTE: Vault state is seeded demo data. Wire live SDK reads for production.");
   }
   bodyLines.push("");
