@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const health = buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
   const vaultSummary = health.vaults.find((v) => v.vaultId === vaultFilter);
 
   if (!vaultSummary) {

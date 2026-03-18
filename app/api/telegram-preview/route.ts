@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const format = searchParams.get("format") ?? "raw";
 
   const { alerts } = generateEnrichedAlerts(MOCK_POSITIONS);
-  const health = buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
 
   const message = formatTelegramAlert(DEMO_WALLET, alerts, health.vaults);
 

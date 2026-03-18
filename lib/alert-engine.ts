@@ -83,8 +83,17 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
     }
 
     // Pending withdrawal delay
+    // NOTE: when walletPositionSource is "unavailable" these amounts come from a seeded
+    // demo scenario, not from a live read of the monitored wallet.  Alerts are preserved
+    // for demo purposes but the title and technicalDetail make the limitation explicit.
     if (pos.pendingWithdrawalAmount > 0 && pos.pendingWithdrawalAgeDays !== null) {
       const days = pos.pendingWithdrawalAgeDays;
+      const demoTag =
+        pos.walletPositionSource === "unavailable" ? " [demo scenario]" : "";
+      const demoNote =
+        pos.walletPositionSource === "unavailable"
+          ? " Note: this pending amount is seeded demo data — no live wallet read has been performed."
+          : "";
       if (days >= 7) {
         alerts.push({
           id: makeId(),
@@ -92,9 +101,9 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
           vaultName: pos.vaultName,
           type: "withdrawal_delay_extended",
           severity: "warning",
-          title: `Withdrawal pending ${days} days — extended`,
-          summary: `A withdrawal of ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} has been pending for ${days} days, longer than typical. The curator may be processing a large redemption batch. Check the Lido Earn dashboard for curator status.`,
-          technicalDetail: `Pending redemption: ${pos.pendingWithdrawalAmount} ${pos.asset}. Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}.`,
+          title: `Withdrawal pending ${days} days — extended${demoTag}`,
+          summary: `A withdrawal of ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} has been pending for ${days} days, longer than typical. The curator may be processing a large redemption batch. Check the Lido Earn dashboard for curator status.${demoNote}`,
+          technicalDetail: `Pending redemption: ${pos.pendingWithdrawalAmount} ${pos.asset}. Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}. walletPositionSource: ${pos.walletPositionSource}.`,
           actionRequired: true,
           suggestedAction:
             "Check the Lido Earn app for an updated withdrawal status or curator announcement.",
@@ -108,9 +117,9 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
           vaultName: pos.vaultName,
           type: "withdrawal_delay",
           severity: "warning",
-          title: `Withdrawal pending ${days} days`,
-          summary: `A withdrawal of ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} is still being processed. The ${pos.curatorName} curator is managing redemptions in the current batch cycle. Most withdrawals complete within 5–7 days.`,
-          technicalDetail: `Pending redemption: ${pos.pendingWithdrawalAmount} ${pos.asset}. Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}. Last rebalance: ${pos.lastRebalanceHoursAgo}h ago.`,
+          title: `Withdrawal pending ${days} days${demoTag}`,
+          summary: `A withdrawal of ${pos.pendingWithdrawalAmount} ${pos.asset} from ${pos.vaultName} is still being processed. The ${pos.curatorName} curator is managing redemptions in the current batch cycle. Most withdrawals complete within 5–7 days.${demoNote}`,
+          technicalDetail: `Pending redemption: ${pos.pendingWithdrawalAmount} ${pos.asset}. Vault: ${pos.contractAddress}. Curator: ${pos.curatorName}. Last rebalance: ${pos.lastRebalanceHoursAgo}h ago. walletPositionSource: ${pos.walletPositionSource}.`,
           actionRequired: false,
           suggestedAction: null,
           timestamp: ago(days * 24 - 1),
@@ -120,16 +129,23 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
     }
 
     // Deposit queued
+    // NOTE: same caveat as pending withdrawals — demo data when walletPositionSource is "unavailable".
     if (pos.pendingDepositAmount > 0) {
+      const demoTag =
+        pos.walletPositionSource === "unavailable" ? " [demo scenario]" : "";
+      const demoNote =
+        pos.walletPositionSource === "unavailable"
+          ? " Note: this pending amount is seeded demo data — no live wallet read has been performed."
+          : "";
       alerts.push({
         id: makeId(),
         vaultId: pos.vaultId,
         vaultName: pos.vaultName,
         type: "deposit_queued",
         severity: "info",
-        title: `${pos.pendingDepositAmount} ${pos.asset} deposit queued`,
-        summary: `A deposit of ${pos.pendingDepositAmount} ${pos.asset} into ${pos.vaultName} is queued and not yet earning yield. The ${pos.curatorName} curator will deploy it at the next rebalance (typically 1–24 hours).`,
-        technicalDetail: `Pending deposit: ${pos.pendingDepositAmount} ${pos.asset}. Next rebalance expected within ~${24 - (pos.lastRebalanceHoursAgo ?? 0)}h.`,
+        title: `${pos.pendingDepositAmount} ${pos.asset} deposit queued${demoTag}`,
+        summary: `A deposit of ${pos.pendingDepositAmount} ${pos.asset} into ${pos.vaultName} is queued and not yet earning yield. The ${pos.curatorName} curator will deploy it at the next rebalance (typically 1–24 hours).${demoNote}`,
+        technicalDetail: `Pending deposit: ${pos.pendingDepositAmount} ${pos.asset}. Next rebalance expected within ~${24 - (pos.lastRebalanceHoursAgo ?? 0)}h. walletPositionSource: ${pos.walletPositionSource}.`,
         actionRequired: false,
         suggestedAction: null,
         timestamp: ago(3),

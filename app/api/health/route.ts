@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const vaultFilter = searchParams.get("vault");
 
-  const health = buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
 
   const vaults = vaultFilter
     ? health.vaults.filter((v) => v.vaultId === vaultFilter)

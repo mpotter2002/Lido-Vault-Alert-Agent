@@ -15,7 +15,7 @@ import { formatEmailAlert } from "@/lib/formatters";
  */
 export async function GET() {
   const { alerts } = generateEnrichedAlerts(MOCK_POSITIONS);
-  const health = buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
 
   const email = formatEmailAlert(DEMO_WALLET, alerts, health.vaults);
 
