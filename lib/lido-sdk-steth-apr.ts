@@ -46,7 +46,8 @@ export async function fetchStEthAprFromChain(): Promise<{
   try {
     // Use dynamic require to keep this server-only and avoid Next.js bundling issues.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { LidoSDKApr } = require(
+    const req = eval("require") as NodeRequire;
+    const { LidoSDKApr } = req(
       "@lidofinance/lido-ethereum-sdk/statistics"
     ) as { LidoSDKApr: any };
 
