@@ -2,57 +2,81 @@ import { NextResponse } from "next/server";
 import { MOCK_POSITIONS, DEMO_WALLET } from "@/lib/mock-data";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
-import { formatTelegramAlert } from "@/lib/formatters";
+import { composeTelegramMessage } from "@/lib/formatters";
+import {
+  getTelegramDeliveryConfig,
+  deliveryConfigSummary,
+} from "@/lib/delivery-config";
 
 /**
  * POST /api/telegram-send
  *
- * Formats the current alert digest and delivers it to a Telegram chat via
- * the Telegram Bot API.
+ * Builds the current vault alert digest and delivers it to a Telegram chat
+ * via the Telegram Bot API.
  *
- * Required env vars:
- *   TELEGRAM_BOT_TOKEN  — Bot token from @BotFather (format: 123456:ABC-DEF...)
- *   TELEGRAM_CHAT_ID    — Chat or channel ID where the message will be sent
- *                         (negative number for groups/channels, e.g. -1001234567890)
+ * Required env vars (unless dryRun=true):
+ *   TELEGRAM_BOT_TOKEN  — Bot token from @BotFather
+ *   TELEGRAM_CHAT_ID    — Chat ID to send to (your user ID for DM testing,
+ *                         a group/channel ID for bot mode)
  *
- * Optional body (JSON):
- *   { "dryRun": true }  — Build and return the message without sending it
+ * Optional env var:
+ *   TELEGRAM_CHANNEL_TYPE — "telegram_dm" (default) | "telegram_bot"
+ *                           Set to "telegram_bot" when using a dedicated public bot.
+ *
+ * Optional JSON body:
+ *   {
+ *     "dryRun": true,        // Compose + return message without sending (default: false)
+ *     "silent": true|false   // Override notification sound. Default: silent for
+ *                            // non-critical digests, audible for critical alerts.
+ *   }
  *
  * Response:
  *   {
  *     sent: boolean,
  *     dryRun: boolean,
  *     wallet: string,
- *     alertCount: number,
- *     message: string,       // the formatted MarkdownV2 text
- *     telegramResponse?: object  // raw Telegram API response when sent=true
- *     error?: string             // if Telegram returned an error
+ *     deliveryConfig: { channelType, ready, chatId, note, nextStep },
+ *     alertMeta: { alertCount, criticalCount, warningCount, infoCount,
+ *                  actionRequiredCount, hasActionRequired, isCritical },
+ *     message: string,          // MarkdownV2 text
+ *     sendPayload: object,      // Exact body POSTed to Telegram (minus chat_id)
+ *     telegramResponse?: object // Raw Telegram API response when sent=true
+ *     error?: string            // If delivery failed
+ *     errorType?: string        // "config_missing"|"auth"|"chat_not_found"|"network"|"unknown"
  *   }
  *
- * Usage (curl):
+ * Usage:
  *   curl -X POST http://localhost:3000/api/telegram-send
- *   curl -X POST http://localhost:3000/api/telegram-send -d '{"dryRun":true}' -H 'Content-Type: application/json'
+ *   curl -X POST http://localhost:3000/api/telegram-send \
+ *        -d '{"dryRun":true}' -H 'Content-Type: application/json'
  */
 export async function POST(request: Request) {
   let dryRun = false;
+  let silentOverride: boolean | undefined = undefined;
+
   try {
     const body = await request.json().catch(() => ({}));
     dryRun = body?.dryRun === true;
+    if (typeof body?.silent === "boolean") {
+      silentOverride = body.silent;
+    }
   } catch {
     // ignore body parse errors
   }
 
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const config = getTelegramDeliveryConfig();
+  const configSummary = deliveryConfigSummary(config);
 
-  if (!dryRun && (!botToken || !chatId)) {
+  if (!dryRun && !config.ready) {
     return NextResponse.json(
       {
         sent: false,
         dryRun: false,
+        deliveryConfig: configSummary,
         error:
-          "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars are required. " +
+          `Missing env vars: ${config.missing.join(", ")}. ` +
           "Set them in .env.local or pass dryRun:true to inspect the message without sending.",
+        errorType: "config_missing",
       },
       { status: 400 }
     );
@@ -61,55 +85,85 @@ export async function POST(request: Request) {
   // Build alert content
   const { alerts } = generateEnrichedAlerts(MOCK_POSITIONS);
   const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
-  const message = formatTelegramAlert(DEMO_WALLET, alerts, health.vaults);
+  const payload = composeTelegramMessage(
+    DEMO_WALLET,
+    alerts,
+    health.vaults,
+    silentOverride !== undefined ? { silent: silentOverride } : {}
+  );
+
+  // The body POSTed to Telegram (chat_id added below on live send)
+  const sendPayload = {
+    text: payload.text,
+    parse_mode: payload.parse_mode,
+    disable_web_page_preview: payload.disable_web_page_preview,
+    disable_notification: payload.disable_notification,
+  };
 
   if (dryRun) {
     return NextResponse.json({
       sent: false,
       dryRun: true,
       wallet: DEMO_WALLET,
-      alertCount: alerts.length,
-      criticalCount: alerts.filter((a) => a.severity === "critical").length,
-      warningCount: alerts.filter((a) => a.severity === "warning").length,
-      message,
-      note: "dryRun=true — message formatted but not sent. Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and POST without dryRun to deliver.",
+      deliveryConfig: configSummary,
+      alertMeta: payload.meta,
+      message: payload.text,
+      sendPayload,
+      note: "dryRun=true — message composed but not sent. Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and POST without dryRun to deliver.",
     });
   }
 
   // Send via Telegram Bot API
-  const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
   let telegramResponse: unknown;
   let sendError: string | null = null;
+  let errorType: string | null = null;
 
   try {
-    const res = await fetch(telegramUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: "MarkdownV2",
-      }),
-    });
+    const res = await fetch(
+      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: config.chatId,
+          ...sendPayload,
+        }),
+      }
+    );
     telegramResponse = await res.json();
 
     if (!res.ok) {
-      const errBody = telegramResponse as { description?: string };
-      sendError = `Telegram API error ${res.status}: ${errBody?.description ?? res.statusText}`;
+      const errBody = telegramResponse as {
+        description?: string;
+        error_code?: number;
+      };
+      const desc = errBody?.description ?? res.statusText;
+      sendError = `Telegram API error ${res.status}: ${desc}`;
+
+      if (res.status === 401 || desc.includes("Unauthorized")) {
+        errorType = "auth";
+      } else if (res.status === 400 && desc.includes("chat not found")) {
+        errorType = "chat_not_found";
+      } else {
+        errorType = "unknown";
+      }
     }
   } catch (err) {
-    sendError = err instanceof Error ? err.message : "Network error calling Telegram API";
+    sendError =
+      err instanceof Error ? err.message : "Network error calling Telegram API";
+    errorType = "network";
   }
 
   return NextResponse.json({
     sent: !sendError,
     dryRun: false,
     wallet: DEMO_WALLET,
-    alertCount: alerts.length,
-    criticalCount: alerts.filter((a) => a.severity === "critical").length,
-    warningCount: alerts.filter((a) => a.severity === "warning").length,
-    message,
-    telegramResponse,
-    error: sendError ?? undefined,
+    deliveryConfig: configSummary,
+    alertMeta: payload.meta,
+    message: payload.text,
+    sendPayload,
+    ...(sendError
+      ? { error: sendError, errorType, telegramErrorResponse: telegramResponse }
+      : { telegramResponse }),
   });
 }

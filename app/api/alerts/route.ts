@@ -49,6 +49,31 @@ export async function GET(request: Request) {
     };
   });
 
+  // Agent-friendly summary — quick scan without iterating the full alert list
+  const allCritical = alerts.filter((a) => a.severity === "critical");
+  const allWarnings = alerts.filter((a) => a.severity === "warning");
+  const allActionRequired = alerts.filter((a) => a.actionRequired);
+  const topAlert = allCritical[0] ?? allWarnings[0] ?? alerts[0] ?? null;
+
+  const agentSummary = {
+    criticalCount: allCritical.length,
+    warningCount: allWarnings.length,
+    infoCount: alerts.filter((a) => a.severity === "info").length,
+    actionRequiredCount: allActionRequired.length,
+    hasActionRequired: allActionRequired.length > 0,
+    isCritical: allCritical.length > 0,
+    topAlert: topAlert
+      ? {
+          vaultId: topAlert.vaultId,
+          type: topAlert.type,
+          severity: topAlert.severity,
+          title: topAlert.title,
+          actionRequired: topAlert.actionRequired,
+          suggestedAction: topAlert.suggestedAction,
+        }
+      : null,
+  };
+
   return NextResponse.json({
     wallet: DEMO_WALLET,
     generatedAt: new Date().toISOString(),
@@ -57,6 +82,7 @@ export async function GET(request: Request) {
       "Vault state is seeded demo data. Benchmark values are fixed reference rates. " +
       "See freshness.source on each benchmark entry. " +
       "Wire Lido JS SDK for live vault reads.",
+    agentSummary,
     benchmarks: benchmarkMeta,
     alertCount: filtered.length,
     alerts: filtered.map((a) => ({

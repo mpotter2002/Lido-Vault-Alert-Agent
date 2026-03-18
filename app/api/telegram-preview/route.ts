@@ -2,38 +2,63 @@ import { NextResponse } from "next/server";
 import { MOCK_POSITIONS, DEMO_WALLET } from "@/lib/mock-data";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
-import { formatTelegramAlert } from "@/lib/formatters";
+import { composeTelegramMessage } from "@/lib/formatters";
+import {
+  getTelegramDeliveryConfig,
+  deliveryConfigSummary,
+} from "@/lib/delivery-config";
 
 /**
  * GET /api/telegram-preview
  *
- * Returns a Telegram MarkdownV2-formatted alert message ready for a bot to send.
- * Useful for testing notification output before wiring a real bot token.
+ * Returns a fully composed Telegram alert digest without sending it.
+ * Useful for inspecting message output and testing bot integration before
+ * wiring a live bot token.
  *
- * Query params:
- *   format=raw     — return the raw MarkdownV2 string in a JSON envelope (default)
- *   format=text    — return plain text with the message in `message` key
+ * The `sendPayload` field contains the exact JSON body ready to POST to
+ * the Telegram Bot API sendMessage endpoint — add `chat_id` and you're done:
+ *
+ *   POST https://api.telegram.org/bot<TOKEN>/sendMessage
+ *   { "chat_id": "<YOUR_CHAT_ID>", ...sendPayload }
+ *
+ * Response:
+ *   {
+ *     wallet: string,
+ *     generatedAt: string,
+ *     dataMode: string,
+ *     deliveryConfig: { channelType, ready, missing?, chatId, note, nextStep },
+ *     alertMeta: { alertCount, criticalCount, warningCount, infoCount,
+ *                  actionRequiredCount, hasActionRequired, isCritical },
+ *     message: string,      // MarkdownV2-formatted text
+ *     sendPayload: {        // Drop into Telegram sendMessage body (add chat_id)
+ *       text, parse_mode, disable_web_page_preview, disable_notification
+ *     },
+ *     note: string
+ *   }
  */
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const format = searchParams.get("format") ?? "raw";
-
+export async function GET(_request: Request) {
   const { alerts } = generateEnrichedAlerts(MOCK_POSITIONS);
   const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  const config = getTelegramDeliveryConfig();
 
-  const message = formatTelegramAlert(DEMO_WALLET, alerts, health.vaults);
+  const payload = composeTelegramMessage(DEMO_WALLET, alerts, health.vaults);
 
   return NextResponse.json({
     wallet: DEMO_WALLET,
     generatedAt: health.generatedAt,
     dataMode: health.dataMode,
-    alertCount: alerts.length,
-    criticalCount: alerts.filter((a) => a.severity === "critical").length,
-    warningCount: alerts.filter((a) => a.severity === "warning").length,
-    format: format === "text" ? "plain_text" : "telegram_markdownv2",
-    message,
+    deliveryConfig: deliveryConfigSummary(config),
+    alertMeta: payload.meta,
+    message: payload.text,
+    sendPayload: {
+      text: payload.text,
+      parse_mode: payload.parse_mode,
+      disable_web_page_preview: payload.disable_web_page_preview,
+      disable_notification: payload.disable_notification,
+    },
     note:
-      "Pass this `message` payload to the Telegram Bot API sendMessage() with parse_mode=MarkdownV2. " +
+      "Add chat_id to sendPayload and POST to https://api.telegram.org/bot<TOKEN>/sendMessage. " +
+      "Use POST /api/telegram-send to deliver from the server. " +
       "This is seeded demo data — not a live on-chain read.",
   });
 }

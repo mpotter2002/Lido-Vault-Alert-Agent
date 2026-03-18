@@ -13,22 +13,70 @@ function escapeMd(text: string): string {
   return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, (c) => `\\${c}`);
 }
 
-export function formatTelegramAlert(
+// ---------------------------------------------------------------------------
+// Structured Telegram message payload
+//
+// Use composeTelegramMessage() to get a payload object ready to POST to the
+// Telegram Bot API sendMessage endpoint. Pass `payload.sendPayload` directly
+// as the request body.
+// ---------------------------------------------------------------------------
+
+export interface TelegramMessageMeta {
+  alertCount: number;
+  criticalCount: number;
+  warningCount: number;
+  infoCount: number;
+  actionRequiredCount: number;
+  hasActionRequired: boolean;
+  /** True when at least one alert has severity=critical. Use for routing / escalation. */
+  isCritical: boolean;
+  dataMode: "seeded_demo" | "live";
+}
+
+export interface TelegramMessagePayload {
+  /** The MarkdownV2-formatted message text. */
+  text: string;
+  /** Always "MarkdownV2". */
+  parse_mode: "MarkdownV2";
+  /** Suppress link previews — recommended for alert digests. */
+  disable_web_page_preview: boolean;
+  /**
+   * When true the message arrives silently (no sound/vibration).
+   * Set for low-severity digests; false for critical alerts.
+   */
+  disable_notification: boolean;
+  /** Agent-readable metadata about the alert content. Not sent to Telegram. */
+  meta: TelegramMessageMeta;
+}
+
+/**
+ * Build a structured Telegram message payload for a vault alert digest.
+ *
+ * `sendPayload` contains exactly the fields the Telegram Bot API expects
+ * (minus chat_id, which the caller injects):
+ *   { text, parse_mode, disable_web_page_preview, disable_notification }
+ *
+ * `meta` is agent-readable metadata — useful for routing decisions, filtering
+ * by severity before send, or building downstream summaries.
+ */
+export function composeTelegramMessage(
   wallet: string,
   alerts: Alert[],
-  vaultSummaries: VaultHealthSummary[]
-): string {
+  vaultSummaries: VaultHealthSummary[],
+  options: { silent?: boolean } = {}
+): TelegramMessagePayload {
   const critical = alerts.filter((a) => a.severity === "critical");
   const warnings = alerts.filter((a) => a.severity === "warning");
+  const infos = alerts.filter((a) => a.severity === "info");
+  const actionRequired = alerts.filter((a) => a.actionRequired);
+  const isCritical = critical.length > 0;
 
-  const statusEmoji =
-    critical.length > 0 ? "🚨" : warnings.length > 0 ? "⚠️" : "✅";
-  const statusLabel =
-    critical.length > 0
-      ? `${critical.length} CRITICAL`
-      : warnings.length > 0
-      ? `${warnings.length} warning${warnings.length > 1 ? "s" : ""}`
-      : "All clear";
+  const statusEmoji = isCritical ? "🚨" : warnings.length > 0 ? "⚠️" : "✅";
+  const statusLabel = isCritical
+    ? `${critical.length} CRITICAL`
+    : warnings.length > 0
+    ? `${warnings.length} warning${warnings.length > 1 ? "s" : ""}`
+    : "All clear";
 
   const shortWallet = `${wallet.slice(0, 6)}…${wallet.slice(-4)}`;
 
@@ -74,13 +122,44 @@ export function formatTelegramAlert(
   }
 
   // Data source disclaimer
-  const dataNote = vaultSummaries[0]?.freshness.source === "seeded"
-    ? "⚠️ _Vault state: seeded demo data_"
-    : "✅ _Vault state: live_";
-  lines.push(dataNote);
+  const isSeeded = vaultSummaries[0]?.freshness.source === "seeded";
+  const dataMode: "seeded_demo" | "live" = isSeeded ? "seeded_demo" : "live";
+  lines.push(isSeeded ? "⚠️ _Vault state: seeded demo data_" : "✅ _Vault state: live_");
   lines.push(`🤖 _Lido Vault Alert Agent_`);
 
-  return lines.join("\n");
+  const text = lines.join("\n");
+
+  // Silence non-critical notifications unless caller overrides
+  const disable_notification = options.silent !== undefined ? options.silent : !isCritical;
+
+  return {
+    text,
+    parse_mode: "MarkdownV2",
+    disable_web_page_preview: true,
+    disable_notification,
+    meta: {
+      alertCount: alerts.length,
+      criticalCount: critical.length,
+      warningCount: warnings.length,
+      infoCount: infos.length,
+      actionRequiredCount: actionRequired.length,
+      hasActionRequired: actionRequired.length > 0,
+      isCritical,
+      dataMode,
+    },
+  };
+}
+
+/**
+ * @deprecated Use composeTelegramMessage() and access .text instead.
+ * Kept for backward compatibility with existing call sites.
+ */
+export function formatTelegramAlert(
+  wallet: string,
+  alerts: Alert[],
+  vaultSummaries: VaultHealthSummary[]
+): string {
+  return composeTelegramMessage(wallet, alerts, vaultSummaries).text;
 }
 
 // ---------------------------------------------------------------------------
