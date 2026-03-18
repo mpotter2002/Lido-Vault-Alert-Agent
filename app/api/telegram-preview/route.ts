@@ -36,7 +36,7 @@ import {
  *     note: string
  *   }
  */
-export async function GET(_request: Request) {
+export async function GET() {
   const { alerts } = await generateEnrichedAlerts(MOCK_POSITIONS);
   const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
   const config = getTelegramDeliveryConfig();
