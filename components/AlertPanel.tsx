@@ -75,13 +75,26 @@ function AlertRow({
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {onDismiss && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-              className="text-slate-600 hover:text-slate-400 text-xs transition-colors px-1"
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDismiss();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDismiss();
+                }
+              }}
+              className="text-slate-600 hover:text-slate-400 text-xs transition-colors px-1 cursor-pointer"
               title="Dismiss"
+              aria-label="Dismiss alert"
             >
               ✕
-            </button>
+            </span>
           )}
           <span className="text-slate-600 text-xs mt-0.5">
             {isExpanded ? "▲" : "▼"}
