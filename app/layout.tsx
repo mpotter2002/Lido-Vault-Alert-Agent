@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Lido Vault Alert Agent",
-  description: "API agent for monitoring Lido Earn vaults (EarnETH, EarnUSD)",
+  title: "Lido Vault Position Monitor + Alert Agent",
+  description: "Live on-chain monitoring and personalised alerts for Lido Earn vaults (EarnETH, EarnUSD)",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

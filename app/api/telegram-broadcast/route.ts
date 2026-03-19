@@ -2,7 +2,7 @@
  * POST /api/telegram-broadcast
  *
  * Sends personalized vault alerts to all subscribers via Telegram.
- * Subscribers who have an email set also receive an email alert via Resend.
+ * Subscribers who have an email set also receive an email alert via Gmail SMTP.
  * Each subscriber gets a message tailored to their wallet position.
  *
  * This is the route your scheduler (cron, Vercel cron, or external scheduler)
@@ -35,6 +35,15 @@ async function buildPerWalletHealth(
 }
 
 export async function POST(request: Request) {
+  // Require Authorization: Bearer <BROADCAST_SECRET>
+  const secret = process.env.BROADCAST_SECRET;
+  if (secret) {
+    const auth = request.headers.get("authorization") ?? "";
+    if (auth !== `Bearer ${secret}`) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
   let dryRun = false;
   let onlyCritical = false;
 

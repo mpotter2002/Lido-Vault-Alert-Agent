@@ -1,0 +1,38 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1a1a1a;
+  --bg-nav: rgba(26, 26, 26, 0.88);
+  --surface: #222222;
+  --surface-2: #282828;
+  --surface-3: #2e2e2e;
+  --border: #2e2e2e;
+  --border-subtle: #252525;
+  --text: #efefef;
+  --text-2: #888888;
+  --text-3: #555555;
+  --accent: #0a84ff;
+  --accent-dim: rgba(10, 132, 255, 0.12);
+  --green: #30d158;
+  --green-dim: rgba(48, 209, 88, 0.12);
+  --orange: #ff9f0a;
+  --orange-dim: rgba(255, 159, 10, 0.12);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  --mono: "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", Menlo, monospace;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: rgba(10, 132, 255, 0.25);
+}

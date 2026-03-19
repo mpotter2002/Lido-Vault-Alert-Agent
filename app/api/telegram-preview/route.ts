@@ -4,6 +4,7 @@ import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
 import { getTelegramDeliveryConfig, deliveryConfigSummary } from "@/lib/delivery-config";
 import { buildLivePositions } from "@/lib/live-positions";
+import { VaultHealthSummary } from "@/lib/domain";
 
 const MONITORED_WALLET =
   process.env.MONITORED_WALLET ?? "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
@@ -22,25 +23,49 @@ const MONITORED_WALLET =
  *   { "chat_id": "<YOUR_CHAT_ID>", ...sendPayload }
  *
  * Query params:
- *   wallet=0x...  — override monitored wallet (default: MONITORED_WALLET env var)
+ *   wallet=0x...                 — single wallet (default: MONITORED_WALLET env var)
+ *   wallets=0x...,0x...,0x...   — comma-separated wallets for multi-wallet preview
+ *                                  mirrors the exact message format sent by /api/telegram-broadcast
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const wallet = searchParams.get("wallet") ?? MONITORED_WALLET;
+  const walletsParam = searchParams.get("wallets");
+  const singleWallet = searchParams.get("wallet") ?? MONITORED_WALLET;
+
+  const walletList = walletsParam
+    ? walletsParam.split(",").map((w) => w.trim()).filter((w) => /^0x[0-9a-fA-F]{40}$/.test(w))
+    : [singleWallet];
+
+  if (walletList.length === 0) {
+    return NextResponse.json(
+      { error: "No valid wallet addresses provided" },
+      { status: 400 }
+    );
+  }
 
   const { positions } = await buildLivePositions();
-  const [{ alerts }, health, config] = await Promise.all([
+  const [{ alerts }, ...walletHealthResponses] = await Promise.all([
     generateEnrichedAlerts(positions),
-    buildHealthResponse(wallet),
-    Promise.resolve(getTelegramDeliveryConfig()),
+    ...walletList.map((w) => buildHealthResponse(w)),
   ]);
 
-  const payload = composeTelegramMessage(wallet, alerts, health.vaults);
+  const config = getTelegramDeliveryConfig();
+  const perWalletHealth: { wallet: string; vaults: VaultHealthSummary[] }[] =
+    walletList.map((wallet, i) => ({ wallet, vaults: walletHealthResponses[i].vaults }));
+
+  const primaryHealth = walletHealthResponses[0];
+  const payload = composeTelegramMessage(
+    walletList,
+    alerts,
+    primaryHealth.vaults,
+    { perWalletVaults: perWalletHealth }
+  );
 
   return NextResponse.json({
-    wallet,
-    generatedAt: health.generatedAt,
-    dataMode: health.dataMode,
+    wallets: walletList,
+    wallet: walletList[0],
+    generatedAt: primaryHealth.generatedAt,
+    dataMode: primaryHealth.dataMode,
     deliveryConfig: deliveryConfigSummary(config),
     alertMeta: payload.meta,
     message: payload.text,
@@ -53,6 +78,6 @@ export async function GET(request: Request) {
     note:
       "Add chat_id to sendPayload and POST to https://api.telegram.org/bot<TOKEN>/sendMessage. " +
       "Use POST /api/telegram-send to deliver from the server. " +
-      `Data mode: ${health.dataMode}. ${health.note}`,
+      `Data mode: ${primaryHealth.dataMode}. ${primaryHealth.note}`,
   });
 }

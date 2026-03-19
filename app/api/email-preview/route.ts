@@ -7,11 +7,11 @@ import { formatEmailAlert } from "@/lib/formatters";
 /**
  * GET /api/email-preview
  *
- * Returns a plain-text email alert ready for delivery via any SMTP provider.
+ * Returns a plain-text email alert ready for delivery via Gmail SMTP (or any SMTP provider).
  * Includes subject line, full body, and structured metadata.
  *
- * This is a prototype surface — wire sendgrid/ses/etc in a server action or
- * cron handler to deliver these via real email when ready.
+ * Uses seeded demo data. For live delivery use POST /api/telegram-broadcast (subscribers
+ * with email set receive alerts automatically). Use GET /api/email-test to verify SMTP config.
  */
 export async function GET() {
   const { alerts } = await generateEnrichedAlerts(MOCK_POSITIONS);
@@ -27,7 +27,8 @@ export async function GET() {
     subject: email.subject,
     body: email.body,
     note:
-      "Wire subject + body into your SMTP provider (SendGrid, SES, Resend, etc.). " +
-      "This is seeded demo data — not a live on-chain read.",
+      "This is seeded demo data — not a live on-chain read. " +
+      "For live email delivery, POST /api/telegram-broadcast handles it automatically for subscribers with an email set. " +
+      "Use GET /api/email-test?to=you@example.com to verify Gmail SMTP is configured.",
   });
 }
