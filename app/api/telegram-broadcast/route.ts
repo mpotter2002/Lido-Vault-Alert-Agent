@@ -25,11 +25,6 @@ import { composeTelegramMessage, formatEmailAlert } from "@/lib/formatters";
 import { sendEmail } from "@/lib/email";
 import { VaultHealthSummary } from "@/lib/domain";
 
-/**
- * Fetch health for multiple wallets and merge their vault positions.
- * Vault-level data (APY, TVL, health) comes from the first wallet's response.
- * walletPosition.deposited and .shares are summed across all wallets.
- */
 /** Fetch health for each wallet independently and return per-wallet results. */
 async function buildPerWalletHealth(
   wallets: string[]
@@ -125,12 +120,17 @@ export async function POST(request: Request) {
         };
       }
 
-      // Read wallet positions for all tracked wallets and merge them
-      const mergedVaults = await buildMergedHealth(sub.wallets);
-      const payload = composeTelegramMessage(sub.wallets, relevantAlerts, mergedVaults);
+      // Fetch per-wallet positions for display
+      const perWalletHealth = await buildPerWalletHealth(sub.wallets);
+      const payload = composeTelegramMessage(
+        sub.wallets,
+        relevantAlerts,
+        perWalletHealth[0]?.vaults ?? [],
+        { perWalletVaults: perWalletHealth }
+      );
 
       if (dryRun) {
-        const { subject, body } = formatEmailAlert(sub.wallets[0] ?? sub.wallet, relevantAlerts, mergedVaults);
+        const { subject, body } = formatEmailAlert(sub.wallets[0] ?? sub.wallet, relevantAlerts, perWalletHealth[0]?.vaults ?? []);
         return {
           chatId: sub.chatId,
           wallets: sub.wallets,
@@ -162,7 +162,7 @@ export async function POST(request: Request) {
       // Also send email if subscriber has one set
       let emailResult: { ok: boolean; error?: string } | undefined;
       if (sub.email) {
-        const { subject, body } = formatEmailAlert(sub.wallets[0] ?? sub.wallet, relevantAlerts, mergedVaults);
+        const { subject, body } = formatEmailAlert(sub.wallets[0] ?? sub.wallet, relevantAlerts, perWalletHealth[0]?.vaults ?? []);
         emailResult = await sendEmail(sub.email, subject, body);
       }
 
