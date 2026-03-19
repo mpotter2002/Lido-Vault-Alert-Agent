@@ -59,11 +59,26 @@ export interface TelegramMessagePayload {
  * `meta` is agent-readable metadata — useful for routing decisions, filtering
  * by severity before send, or building downstream summaries.
  */
+function renderVaultPosition(vs: VaultHealthSummary): string {
+  const pos = vs.walletPosition;
+  const apyStr = escapeMd(`${vs.currentAPY.toFixed(2)}% APY`);
+  if (pos.source === "live_wallet_read" && pos.deposited !== null && pos.deposited > 0) {
+    const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
+    const amount = escapeMd(`${pos.deposited.toFixed(4)} ${asset}`);
+    return `• *${escapeMd(vs.vaultName)}*: ${amount} \\(${apyStr}\\)`;
+  } else if (pos.source === "live_wallet_read" && pos.deposited === null && pos.shares !== null && pos.shares > 0) {
+    const shareStr = escapeMd(`${pos.shares.toFixed(6)} shares`);
+    return `• *${escapeMd(vs.vaultName)}*: ${shareStr} \\(${apyStr}\\)`;
+  } else {
+    return `• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`;
+  }
+}
+
 export function composeTelegramMessage(
   wallets: string | string[],
   alerts: Alert[],
   vaultSummaries: VaultHealthSummary[],
-  options: { silent?: boolean } = {}
+  options: { silent?: boolean; perWalletVaults?: { wallet: string; vaults: VaultHealthSummary[] }[] } = {}
 ): TelegramMessagePayload {
   const walletList = Array.isArray(wallets) ? wallets : [wallets];
   const critical = alerts.filter((a) => a.severity === "critical");
@@ -91,23 +106,23 @@ export function composeTelegramMessage(
   lines.push(walletLabel);
   lines.push("");
 
-  // Wallet position — always shown
-  if (vaultSummaries.length > 0) {
+  // Wallet positions
+  const perWallet = options.perWalletVaults;
+  if (perWallet && perWallet.length > 1) {
+    // Multi-wallet: show each wallet's positions separately
+    lines.push("*Your Positions*");
+    for (const { wallet, vaults } of perWallet) {
+      lines.push("");
+      lines.push(`\`${wallet.slice(0, 6)}…${wallet.slice(-4)}\``);
+      for (const vs of vaults) {
+        lines.push(renderVaultPosition(vs));
+      }
+    }
+  } else if (vaultSummaries.length > 0) {
+    // Single wallet: original display
     lines.push("*Your Position*");
     for (const vs of vaultSummaries) {
-      const pos = vs.walletPosition;
-      const apyStr = escapeMd(`${vs.currentAPY.toFixed(2)}% APY`);
-      if (pos.source === "live_wallet_read" && pos.deposited !== null && pos.deposited > 0) {
-        const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
-        const amount = escapeMd(`${pos.deposited.toFixed(4)} ${asset}`);
-        lines.push(`• *${escapeMd(vs.vaultName)}*: ${amount} \\(${apyStr}\\)`);
-      } else if (pos.source === "live_wallet_read" && pos.deposited === null && pos.shares !== null && pos.shares > 0) {
-        // Has vault shares but convertToAssets is unavailable on this vault — show share count
-        const shareStr = escapeMd(`${pos.shares.toFixed(6)} shares`);
-        lines.push(`• *${escapeMd(vs.vaultName)}*: ${shareStr} \\(${apyStr}\\)`);
-      } else {
-        lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);
-      }
+      lines.push(renderVaultPosition(vs));
     }
     lines.push("");
   }

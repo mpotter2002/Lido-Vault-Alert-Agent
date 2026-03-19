@@ -58,44 +58,13 @@ async function reply(chatId: string, text: string): Promise<void> {
  * Vault-level data (APY, TVL, health) comes from the first wallet's response.
  * walletPosition.deposited and .shares are summed across all wallets.
  */
-async function buildMergedHealth(wallets: string[]): Promise<VaultHealthSummary[]> {
+/** Fetch health for each wallet independently and return per-wallet results. */
+async function buildPerWalletHealth(
+  wallets: string[]
+): Promise<{ wallet: string; vaults: VaultHealthSummary[] }[]> {
   if (wallets.length === 0) return [];
-  // Each call fetches its own live data so livePositionMeta is populated correctly.
-  const allHealthResponses = await Promise.all(wallets.map((w) => buildHealthResponse(w)));
-  const base = allHealthResponses[0].vaults;
-  if (allHealthResponses.length === 1) return base;
-
-  return base.map((baseSummary) => {
-    let totalDeposited: number | null = baseSummary.walletPosition.deposited;
-    let totalShares: number | null = baseSummary.walletPosition.shares;
-    let anyLiveRead = baseSummary.walletPosition.source === "live_wallet_read";
-
-    for (let i = 1; i < allHealthResponses.length; i++) {
-      const match = allHealthResponses[i].vaults.find((s) => s.vaultId === baseSummary.vaultId);
-      if (match?.walletPosition.source === "live_wallet_read") {
-        // Only add positive values — a 0 from a wallet with no position must not
-        // corrupt a null deposited from another wallet (null = has shares but
-        // convertToAssets is unavailable, which is different from "no position").
-        if (match.walletPosition.deposited !== null && match.walletPosition.deposited > 0) {
-          totalDeposited = (totalDeposited ?? 0) + match.walletPosition.deposited;
-        }
-        if (match.walletPosition.shares !== null && match.walletPosition.shares > 0) {
-          totalShares = (totalShares ?? 0) + match.walletPosition.shares;
-        }
-        anyLiveRead = true;
-      }
-    }
-
-    return {
-      ...baseSummary,
-      walletPosition: {
-        source: anyLiveRead ? ("live_wallet_read" as const) : ("unavailable" as const),
-        deposited: anyLiveRead ? totalDeposited : null,
-        shares: anyLiveRead ? totalShares : null,
-        note: baseSummary.walletPosition.note,
-      },
-    };
-  });
+  const responses = await Promise.all(wallets.map((w) => buildHealthResponse(w)));
+  return wallets.map((wallet, i) => ({ wallet, vaults: responses[i].vaults }));
 }
 
 const ALERT_LEVEL_QUESTION =
@@ -495,11 +464,16 @@ export async function POST(request: Request) {
     await reply(chatId, `⏳ Fetching live vault data...`);
     try {
       const { positions } = await buildLivePositions();
-      const [{ alerts }, mergedVaults] = await Promise.all([
+      const [{ alerts }, perWalletHealth] = await Promise.all([
         generateEnrichedAlerts(positions),
-        buildMergedHealth(sub.wallets),
+        buildPerWalletHealth(sub.wallets),
       ]);
-      const payload = composeTelegramMessage(sub.wallets, alerts, mergedVaults);
+      const payload = composeTelegramMessage(
+        sub.wallets,
+        alerts,
+        perWalletHealth[0]?.vaults ?? [],
+        { perWalletVaults: perWalletHealth }
+      );
       const token = process.env.TELEGRAM_BOT_TOKEN;
       if (token) {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
