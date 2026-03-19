@@ -85,6 +85,22 @@ export function composeTelegramMessage(
   lines.push(`Wallet: \`${shortWallet}\``);
   lines.push("");
 
+  // Wallet position — always shown
+  if (vaultSummaries.length > 0) {
+    lines.push("*Your Position*");
+    for (const vs of vaultSummaries) {
+      const pos = vs.walletPosition;
+      const apyStr = escapeMd(`${vs.currentAPY.toFixed(2)}% APY`);
+      if (pos.source === "live_wallet_read" && pos.deposited !== null) {
+        const amount = escapeMd(`${pos.deposited.toFixed(4)} ${vs.vaultId === "earnETH" ? "ETH" : "USDC"}`);
+        lines.push(`• *${escapeMd(vs.vaultName)}*: ${amount} \\(${apyStr}\\)`);
+      } else {
+        lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);
+      }
+    }
+    lines.push("");
+  }
+
   // Alert list (top 5 max for Telegram brevity)
   const topAlerts = alerts.slice(0, 5);
   for (const a of topAlerts) {
