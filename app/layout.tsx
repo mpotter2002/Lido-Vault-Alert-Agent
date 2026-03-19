@@ -5,6 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Lido Vault Position Monitor + Alert Agent",
   description: "Live on-chain monitoring and personalised alerts for Lido Earn vaults (EarnETH, EarnUSD)",
+  icons: { icon: "/logo.png" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
