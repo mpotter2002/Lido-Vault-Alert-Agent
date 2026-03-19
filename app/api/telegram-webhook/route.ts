@@ -1,21 +1,17 @@
 /**
  * POST /api/telegram-webhook
  *
- * Telegram calls this URL every time a user messages your bot.
- * Register this URL once via GET /api/telegram-register-webhook.
- *
  * Supported commands:
- *   /start or /help  — welcome message + command list
- *   /subscribe 0x... — register wallet address for alerts + onboarding
- *   /unsubscribe     — stop receiving alerts
- *   /status          — check current vault health snapshot
- *   /alerts          — show or change alert level (critical / all)
+ *   /start or /help     — welcome + command list
+ *   /subscribe 0x...    — register wallet + onboarding (alert level → yield floor)
+ *   /unsubscribe        — stop receiving alerts
+ *   /status             — live vault health snapshot
+ *   /alerts [critical|all] — view or change alert sensitivity
+ *   /setfloor [N]       — view or change personal yield floor (%)
  *
- * Onboarding flow:
- *   1. User sends /subscribe 0xWallet
- *   2. Bot confirms + asks alert sensitivity question
- *   3. User replies "1" (critical only) or "2" (all alerts)
- *   4. Bot confirms preference and starts monitoring
+ * Onboarding (two-step, triggered after /subscribe):
+ *   Step 1 — user replies "1" or "2" to choose alert level
+ *   Step 2 — user replies a number (e.g. "4") or "skip" to set yield floor
  */
 
 import { NextResponse } from "next/server";
@@ -24,7 +20,8 @@ import {
   removeSubscriber,
   getSubscribers,
   setAlertLevel,
-  clearPendingOnboarding,
+  setYieldFloor,
+  clearPendingStep,
 } from "@/lib/subscribers";
 import { buildLivePositions } from "@/lib/live-positions";
 import { buildHealthResponse } from "@/lib/health-builder";
@@ -32,7 +29,7 @@ import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
-// Telegram send helpers
+// Helpers
 // ---------------------------------------------------------------------------
 
 async function reply(chatId: string, text: string): Promise<void> {
@@ -45,13 +42,18 @@ async function reply(chatId: string, text: string): Promise<void> {
   });
 }
 
-
-const ONBOARDING_QUESTION =
+const ALERT_LEVEL_QUESTION =
   `One quick question — how sensitive do you want alerts?\n\n` +
   `Reply:\n` +
   `1️⃣  Critical only — vault paused, TVL emergency\n` +
   `2️⃣  All alerts — includes yield underperformance warnings\n\n` +
   `You can change this anytime with /alerts`;
+
+const yieldFloorQuestion = (current: number) =>
+  `Last one — what's your minimum acceptable APY?\n\n` +
+  `I'll alert you if either vault drops below this threshold.\n\n` +
+  `Reply with a number like 4 for 4%, or skip to keep the default (${current}%).\n\n` +
+  `You can update this anytime with /setfloor`;
 
 // ---------------------------------------------------------------------------
 // Webhook handler
@@ -74,29 +76,50 @@ export async function POST(request: Request) {
 
   if (!chatId || !text) return NextResponse.json({ ok: true });
 
-  // ── Onboarding reply handler — check before command routing ────────────────
   const sub = getSubscribers().find((s) => s.chatId === chatId);
-  if (sub?.pendingOnboarding && !text.startsWith("/")) {
-    if (text === "1") {
-      setAlertLevel(chatId, "critical");
-      await reply(
-        chatId,
-        `✅ Got it — critical alerts only.\n\n` +
-          `I'll only message you for serious issues like a paused vault or major TVL drop. ` +
-          `Type /alerts all anytime to switch to full alerts.`
-      );
-    } else if (text === "2") {
-      setAlertLevel(chatId, "all");
-      await reply(
-        chatId,
-        `✅ Got it — all alerts enabled.\n\n` +
-          `I'll message you for yield underperformance, rebalances, and any vault health changes. ` +
-          `Type /alerts critical anytime to switch to critical-only.`
-      );
-    } else {
-      await reply(chatId, `Please reply 1 or 2 to choose your alert level, or type /alerts to see options.`);
+
+  // ── Onboarding reply handler — intercepts non-command replies ──────────────
+  if (sub?.pendingStep && !text.startsWith("/")) {
+
+    // Step 1: alert level
+    if (sub.pendingStep === "alertLevel") {
+      if (text === "1") {
+        setAlertLevel(chatId, "critical");
+        await reply(chatId, `✅ Critical alerts only.\n\n` + yieldFloorQuestion(sub.yieldFloorPct));
+      } else if (text === "2") {
+        setAlertLevel(chatId, "all");
+        await reply(chatId, `✅ All alerts enabled.\n\n` + yieldFloorQuestion(sub.yieldFloorPct));
+      } else {
+        await reply(chatId, `Please reply 1 (critical only) or 2 (all alerts).`);
+      }
+      return NextResponse.json({ ok: true });
     }
-    return NextResponse.json({ ok: true });
+
+    // Step 2: yield floor
+    if (sub.pendingStep === "yieldFloor") {
+      if (text.toLowerCase() === "skip") {
+        clearPendingStep(chatId);
+        await reply(
+          chatId,
+          `✅ Using default floor of ${sub.yieldFloorPct}%. You're all set!\n\n` +
+            `Type /status to see a live snapshot anytime.`
+        );
+      } else {
+        const num = parseFloat(text.replace("%", ""));
+        if (isNaN(num) || num < 0 || num > 30) {
+          await reply(chatId, `Please enter a number between 0 and 30 (e.g. 4 for 4%), or skip.`);
+        } else {
+          setYieldFloor(chatId, Math.round(num * 10) / 10);
+          await reply(
+            chatId,
+            `✅ Yield floor set to ${Math.round(num * 10) / 10}%. You're all set!\n\n` +
+              `I'll alert you if EarnETH or EarnUSD APY drops below this.\n` +
+              `Type /status to see a live snapshot anytime.`
+          );
+        }
+      }
+      return NextResponse.json({ ok: true });
+    }
   }
 
   // ── /start or /help ────────────────────────────────────────────────────────
@@ -108,7 +131,8 @@ export async function POST(request: Request) {
         `Commands:\n` +
         `/subscribe 0xYourWallet — start monitoring your position\n` +
         `/status — check current vault health\n` +
-        `/alerts — view or change your alert sensitivity\n` +
+        `/alerts — view or change alert sensitivity\n` +
+        `/setfloor — view or change your minimum APY threshold\n` +
         `/unsubscribe — stop receiving alerts\n` +
         `/help — show this message`
     );
@@ -117,17 +141,14 @@ export async function POST(request: Request) {
 
   // ── /subscribe 0x... ───────────────────────────────────────────────────────
   if (text.startsWith("/subscribe")) {
-    const parts = text.split(/\s+/);
-    const wallet = parts[1]?.trim() ?? "";
-
+    const wallet = text.split(/\s+/)[1]?.trim() ?? "";
     if (!wallet.match(/^0x[0-9a-fA-F]{40}$/)) {
       await reply(
         chatId,
-        `❌ Invalid wallet address.\n\nUsage:\n/subscribe 0xYourWalletAddress\n\nExample:\n/subscribe 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045`
+        `❌ Invalid wallet address.\n\nUsage:\n/subscribe 0xYourWalletAddress`
       );
       return NextResponse.json({ ok: true });
     }
-
     const ok = addSubscriber(chatId, wallet);
     if (ok) {
       await reply(
@@ -135,12 +156,12 @@ export async function POST(request: Request) {
         `✅ Subscribed!\n\n` +
           `Wallet: ${wallet.slice(0, 6)}...${wallet.slice(-4)}\n\n` +
           `You'll receive alerts when:\n` +
-          `• Vault yield drops significantly\n` +
+          `• Vault yield drops below your floor\n` +
           `• Yield trails the stETH/Aave benchmark\n` +
           `• Protocol allocation shifts\n` +
           `• TVL cap is approaching\n` +
           `• Vault health changes\n\n` +
-          ONBOARDING_QUESTION
+          ALERT_LEVEL_QUESTION
       );
     } else {
       await reply(chatId, `❌ Failed to save your subscription. Please try again.`);
@@ -160,29 +181,52 @@ export async function POST(request: Request) {
 
   // ── /alerts [critical|all] ─────────────────────────────────────────────────
   if (text.startsWith("/alerts")) {
-    const parts = text.split(/\s+/);
-    const arg = parts[1]?.toLowerCase();
-
     if (!sub) {
       await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
       return NextResponse.json({ ok: true });
     }
-
+    const arg = text.split(/\s+/)[1]?.toLowerCase();
     if (arg === "critical") {
       setAlertLevel(chatId, "critical");
-      await reply(chatId, `✅ Alert level set to critical only.\n\nI'll only message you for serious vault issues.`);
+      await reply(chatId, `✅ Alert level set to critical only.`);
     } else if (arg === "all") {
       setAlertLevel(chatId, "all");
-      await reply(chatId, `✅ Alert level set to all alerts.\n\nYou'll receive warnings for yield underperformance and rebalances too.`);
+      await reply(chatId, `✅ Alert level set to all alerts.`);
     } else {
       const current = sub.alertLevel === "critical" ? "Critical only" : "All alerts";
       await reply(
         chatId,
-        `Your current alert level: ${current}\n\n` +
-          `To change:\n` +
+        `Your alert level: ${current}\n\n` +
           `/alerts critical — serious issues only\n` +
           `/alerts all — all warnings and updates`
       );
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── /setfloor [N] ─────────────────────────────────────────────────────────
+  if (text.startsWith("/setfloor")) {
+    if (!sub) {
+      await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
+      return NextResponse.json({ ok: true });
+    }
+    const arg = text.split(/\s+/)[1]?.replace("%", "");
+    if (!arg) {
+      await reply(
+        chatId,
+        `Your yield floor: ${sub.yieldFloorPct}%\n\n` +
+          `I alert you if EarnETH or EarnUSD APY drops below this.\n\n` +
+          `To change: /setfloor 4 (for 4%)`
+      );
+      return NextResponse.json({ ok: true });
+    }
+    const num = parseFloat(arg);
+    if (isNaN(num) || num < 0 || num > 30) {
+      await reply(chatId, `Please enter a number between 0 and 30, e.g. /setfloor 4`);
+    } else {
+      const rounded = Math.round(num * 10) / 10;
+      setYieldFloor(chatId, rounded);
+      await reply(chatId, `✅ Yield floor updated to ${rounded}%.`);
     }
     return NextResponse.json({ ok: true });
   }
@@ -193,12 +237,8 @@ export async function POST(request: Request) {
       await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
       return NextResponse.json({ ok: true });
     }
-
-    // Clear any pending onboarding if they're using the bot
-    if (sub.pendingOnboarding) clearPendingOnboarding(chatId);
-
+    if (sub.pendingStep) clearPendingStep(chatId);
     await reply(chatId, `⏳ Fetching live vault data...`);
-
     try {
       const { positions } = await buildLivePositions();
       const [{ alerts }, health] = await Promise.all([
@@ -206,7 +246,6 @@ export async function POST(request: Request) {
         buildHealthResponse(sub.wallet),
       ]);
       const payload = composeTelegramMessage(sub.wallet, alerts, health.vaults);
-
       const token = process.env.TELEGRAM_BOT_TOKEN;
       if (token) {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -224,7 +263,6 @@ export async function POST(request: Request) {
     } catch {
       await reply(chatId, `❌ Failed to fetch vault data. Try again in a moment.`);
     }
-
     return NextResponse.json({ ok: true });
   }
 

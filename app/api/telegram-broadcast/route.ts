@@ -65,12 +65,38 @@ export async function POST(request: Request) {
 
   const criticalAlerts = alerts.filter((a) => a.severity === "critical");
 
-  // Send personalized message to each subscriber (respecting their alert level)
+  // Send personalized message to each subscriber (respecting their preferences)
   const results = await Promise.allSettled(
     subscribers.map(async (sub) => {
-      // Skip non-critical alerts for subscribers who only want critical
-      const relevantAlerts =
+      // 1. Start with alerts filtered by their level preference
+      let relevantAlerts =
         sub.alertLevel === "critical" ? criticalAlerts : alerts;
+
+      // 2. Add a personal yield-floor alert if any vault APY is below their floor
+      //    (this fires even in "critical" mode since it's their personal threshold)
+      const yieldFloorBreaches = positions
+        .filter((pos) => pos.currentAPY > 0 && pos.currentAPY < sub.yieldFloorPct)
+        .map((pos) => ({
+          id: `floor-${pos.vaultId}-${sub.chatId}`,
+          vaultName: pos.vaultName,
+          vaultId: pos.vaultId,
+          type: "benchmark_underperformance" as const,
+          severity: "warning" as const,
+          title: `${pos.vaultName} APY (${pos.currentAPY.toFixed(2)}%) is below your ${sub.yieldFloorPct}% floor`,
+          summary:
+            `${pos.vaultName} is currently earning ${pos.currentAPY.toFixed(2)}% APY, ` +
+            `which is below your personal yield floor of ${sub.yieldFloorPct}%.`,
+          technicalDetail: `Vault APY: ${pos.currentAPY.toFixed(2)}%. Your floor: ${sub.yieldFloorPct}%.`,
+          actionRequired: false,
+          suggestedAction: "Review your position or update your floor with /setfloor.",
+          timestamp: new Date(),
+          dismissed: false,
+        }));
+
+      // Merge, deduplicating any vault already covered by a system alert
+      const coveredVaults = new Set(relevantAlerts.map((a) => a.vaultId));
+      const personalAlerts = yieldFloorBreaches.filter((a) => !coveredVaults.has(a.vaultId));
+      relevantAlerts = [...relevantAlerts, ...personalAlerts];
 
       if (relevantAlerts.length === 0 && !dryRun) {
         return {
@@ -78,7 +104,7 @@ export async function POST(request: Request) {
           wallet: sub.wallet,
           sent: false,
           skipped: true,
-          reason: `alertLevel=${sub.alertLevel}, no relevant alerts`,
+          reason: `alertLevel=${sub.alertLevel}, floor=${sub.yieldFloorPct}%, no relevant alerts`,
         };
       }
 

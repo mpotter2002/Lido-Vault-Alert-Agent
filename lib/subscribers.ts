@@ -2,29 +2,32 @@
  * lib/subscribers.ts
  *
  * File-based subscriber store.
- * Each subscriber has a Telegram chat_id, an Ethereum wallet address,
- * and an alert level preference set during onboarding.
+ * Each subscriber has a Telegram chat_id, wallet address, alert level,
+ * and a personal yield floor (minimum APY before they get alerted).
  *
- * Storage:
- *   Local dev  — ./data/subscribers.json  (set DATA_DIR env var to override)
- *   Production — same path; on Vercel use a volume or swap to Vercel KV
- *
- * Format:
- *   { "subscribers": [{ chatId, wallet, subscribedAt, alertLevel, pendingOnboarding }] }
+ * Onboarding steps tracked via pendingStep:
+ *   null        — fully onboarded
+ *   "alertLevel" — waiting for 1/2 reply
+ *   "yieldFloor" — waiting for APY floor reply
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 export type AlertLevel = "critical" | "all";
+export type OnboardingStep = "alertLevel" | "yieldFloor" | null;
+
+export const DEFAULT_YIELD_FLOOR_PCT = 3; // 3% — alert if vault APY drops below this
 
 export interface Subscriber {
   chatId: string;
   wallet: string;
   subscribedAt: string;
   alertLevel: AlertLevel;
-  /** true while waiting for the user to reply to the onboarding question */
-  pendingOnboarding: boolean;
+  /** Minimum acceptable APY (%). Alert fires if any vault drops below this. */
+  yieldFloorPct: number;
+  /** Current onboarding step awaiting a reply, or null if complete. */
+  pendingStep: OnboardingStep;
 }
 
 function dataFile(): string {
@@ -40,10 +43,11 @@ export function getSubscribers(): Subscriber[] {
     const raw = readFileSync(file, "utf-8");
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed?.subscribers)) return [];
-    // Back-compat: fill defaults for older records
-    return parsed.subscribers.map((s: Partial<Subscriber>) => ({
-      alertLevel: "all",
-      pendingOnboarding: false,
+    return parsed.subscribers.map((s: Partial<Subscriber> & { pendingOnboarding?: boolean }) => ({
+      alertLevel: "all" as AlertLevel,
+      yieldFloorPct: DEFAULT_YIELD_FLOOR_PCT,
+      // back-compat: old records used pendingOnboarding boolean
+      pendingStep: s.pendingStep ?? (s.pendingOnboarding ? "alertLevel" : null),
       ...s,
     })) as Subscriber[];
   } catch {
@@ -60,46 +64,58 @@ function save(subscribers: Subscriber[]): boolean {
   }
 }
 
+/** Register or update a subscriber. Resets onboarding to the first step. */
 export function addSubscriber(chatId: string, wallet: string): boolean {
   const subscribers = getSubscribers();
   const existing = subscribers.find((s) => s.chatId === chatId);
   if (existing) {
     existing.wallet = wallet;
     existing.subscribedAt = new Date().toISOString();
-    existing.pendingOnboarding = true;
+    existing.pendingStep = "alertLevel";
   } else {
     subscribers.push({
       chatId,
       wallet,
       subscribedAt: new Date().toISOString(),
       alertLevel: "all",
-      pendingOnboarding: true,
+      yieldFloorPct: DEFAULT_YIELD_FLOOR_PCT,
+      pendingStep: "alertLevel",
     });
   }
   return save(subscribers);
 }
 
+/** Set alert level and advance onboarding to the yield floor step. */
 export function setAlertLevel(chatId: string, level: AlertLevel): boolean {
   const subscribers = getSubscribers();
   const sub = subscribers.find((s) => s.chatId === chatId);
   if (!sub) return false;
   sub.alertLevel = level;
-  sub.pendingOnboarding = false;
+  sub.pendingStep = "yieldFloor";
   return save(subscribers);
 }
 
-export function clearPendingOnboarding(chatId: string): boolean {
+/** Set the personal yield floor and complete onboarding. */
+export function setYieldFloor(chatId: string, pct: number): boolean {
   const subscribers = getSubscribers();
   const sub = subscribers.find((s) => s.chatId === chatId);
   if (!sub) return false;
-  sub.pendingOnboarding = false;
+  sub.yieldFloorPct = pct;
+  sub.pendingStep = null;
+  return save(subscribers);
+}
+
+export function clearPendingStep(chatId: string): boolean {
+  const subscribers = getSubscribers();
+  const sub = subscribers.find((s) => s.chatId === chatId);
+  if (!sub) return false;
+  sub.pendingStep = null;
   return save(subscribers);
 }
 
 export function removeSubscriber(chatId: string): boolean {
   try {
-    const subscribers = getSubscribers().filter((s) => s.chatId !== chatId);
-    return save(subscribers);
+    return save(getSubscribers().filter((s) => s.chatId !== chatId));
   } catch {
     return false;
   }
