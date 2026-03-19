@@ -402,6 +402,7 @@ export async function buildLivePositions(): Promise<{
         curatorName: meta.curatorName,
         lastRebalanceHoursAgo: null,
         strategyWeights: weights,
+        vaultMetricsSource: apySource === "live" || tvlSource === "live" ? "live" : "unavailable",
         walletPositionSource: "unavailable",
         deposited: null,
         shares: null,

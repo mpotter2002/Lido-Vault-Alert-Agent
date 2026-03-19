@@ -1,5 +1,5 @@
 import { VaultPosition } from "./types";
-import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState } from "./domain";
+import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState, LiveVaultApySummary, LiveTvlState } from "./domain";
 import { generateEnrichedAlerts } from "./alert-engine";
 import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
@@ -202,6 +202,16 @@ export async function buildHealthResponse(
         : undefined,
     };
 
+    const apySource = livePositionMeta?.vaultSources.get(pos.vaultId)?.apy;
+    const liveVaultApy: LiveVaultApySummary = apySource === "live"
+      ? { source: "live", apy: pos.currentAPY, apy7dAvg: null, note: "APY from Mellow API." }
+      : { source: "unavailable", apy: null, apy7dAvg: null, note: "APY unavailable — Mellow API fetch failed or vault not found." };
+
+    const tvlSource = livePositionMeta?.vaultSources.get(pos.vaultId)?.tvl;
+    const liveTvl: LiveTvlState = tvlSource === "live" || tvlSource === "partial"
+      ? { source: "live_vault_read", totalAssetsNative: pos.tvl, asset: pos.asset, note: "TVL from Mellow API." }
+      : { source: "unavailable", totalAssetsNative: null, asset: pos.asset, note: "TVL unavailable — Mellow API fetch failed." };
+
     return {
       vaultId: pos.vaultId,
       vaultName: pos.vaultName,
@@ -211,6 +221,8 @@ export async function buildHealthResponse(
       currentTVL: pos.tvl > 0 ? pos.tvl : null,
       tvlCapUSD: pos.tvlCapUSD ?? null,
       walletPosition,
+      liveVaultApy,
+      liveTvl,
       benchmark: bm,
       allocation: alloc,
       recommendation,
