@@ -76,7 +76,8 @@ export async function POST(request: Request) {
 
   if (!chatId || !text) return NextResponse.json({ ok: true });
 
-  const sub = getSubscribers().find((s) => s.chatId === chatId);
+  const subscribers = await getSubscribers();
+  const sub = subscribers.find((s) => s.chatId === chatId);
 
   // ── Onboarding reply handler — intercepts non-command replies ──────────────
   if (sub?.pendingStep && !text.startsWith("/")) {
@@ -84,10 +85,10 @@ export async function POST(request: Request) {
     // Step 1: alert level
     if (sub.pendingStep === "alertLevel") {
       if (text === "1") {
-        setAlertLevel(chatId, "critical");
+        await setAlertLevel(chatId, "critical");
         await reply(chatId, `✅ Critical alerts only.\n\n` + yieldFloorQuestion(sub.yieldFloorPct));
       } else if (text === "2") {
-        setAlertLevel(chatId, "all");
+        await setAlertLevel(chatId, "all");
         await reply(chatId, `✅ All alerts enabled.\n\n` + yieldFloorQuestion(sub.yieldFloorPct));
       } else {
         await reply(chatId, `Please reply 1 (critical only) or 2 (all alerts).`);
@@ -98,7 +99,7 @@ export async function POST(request: Request) {
     // Step 2: yield floor
     if (sub.pendingStep === "yieldFloor") {
       if (text.toLowerCase() === "skip") {
-        clearPendingStep(chatId);
+        await clearPendingStep(chatId);
         await reply(
           chatId,
           `✅ Using default floor of ${sub.yieldFloorPct}%. You're all set!\n\n` +
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
         if (isNaN(num) || num < 0 || num > 30) {
           await reply(chatId, `Please enter a number between 0 and 30 (e.g. 4 for 4%), or skip.`);
         } else {
-          setYieldFloor(chatId, Math.round(num * 10) / 10);
+          await setYieldFloor(chatId, Math.round(num * 10) / 10);
           await reply(
             chatId,
             `✅ Yield floor set to ${Math.round(num * 10) / 10}%. You're all set!\n\n` +
@@ -149,7 +150,7 @@ export async function POST(request: Request) {
       );
       return NextResponse.json({ ok: true });
     }
-    const ok = addSubscriber(chatId, wallet);
+    const ok = await addSubscriber(chatId, wallet);
     if (ok) {
       await reply(
         chatId,
@@ -171,7 +172,7 @@ export async function POST(request: Request) {
 
   // ── /unsubscribe ───────────────────────────────────────────────────────────
   if (text.startsWith("/unsubscribe")) {
-    removeSubscriber(chatId);
+    await removeSubscriber(chatId);
     await reply(
       chatId,
       `✅ Unsubscribed. You won't receive any more alerts.\n\nType /subscribe 0xYourWallet anytime to re-subscribe.`
@@ -187,10 +188,10 @@ export async function POST(request: Request) {
     }
     const arg = text.split(/\s+/)[1]?.toLowerCase();
     if (arg === "critical") {
-      setAlertLevel(chatId, "critical");
+      await setAlertLevel(chatId, "critical");
       await reply(chatId, `✅ Alert level set to critical only.`);
     } else if (arg === "all") {
-      setAlertLevel(chatId, "all");
+      await setAlertLevel(chatId, "all");
       await reply(chatId, `✅ Alert level set to all alerts.`);
     } else {
       const current = sub.alertLevel === "critical" ? "Critical only" : "All alerts";
@@ -225,7 +226,7 @@ export async function POST(request: Request) {
       await reply(chatId, `Please enter a number between 0 and 30, e.g. /setfloor 4`);
     } else {
       const rounded = Math.round(num * 10) / 10;
-      setYieldFloor(chatId, rounded);
+      await setYieldFloor(chatId, rounded);
       await reply(chatId, `✅ Yield floor updated to ${rounded}%.`);
     }
     return NextResponse.json({ ok: true });
@@ -237,7 +238,7 @@ export async function POST(request: Request) {
       await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
       return NextResponse.json({ ok: true });
     }
-    if (sub.pendingStep) clearPendingStep(chatId);
+    if (sub.pendingStep) await clearPendingStep(chatId);
     await reply(chatId, `⏳ Fetching live vault data...`);
     try {
       const { positions } = await buildLivePositions();

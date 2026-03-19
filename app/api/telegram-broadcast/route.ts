@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const subscribers = getSubscribers();
+  const subscribers = await getSubscribers();
   if (!subscribers.length) {
     return NextResponse.json({ sent: 0, skipped: 0, message: "No subscribers yet." });
   }
