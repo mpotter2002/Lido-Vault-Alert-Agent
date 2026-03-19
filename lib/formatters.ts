@@ -95,7 +95,11 @@ export function composeTelegramMessage(
         const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
         const amount = escapeMd(`${pos.deposited.toFixed(4)} ${asset}`);
         lines.push(`• *${escapeMd(vs.vaultName)}*: ${amount} \\(${apyStr}\\)`);
-      } else if (pos.source === "live_wallet_read" && (pos.deposited === null || pos.deposited === 0)) {
+      } else if (pos.source === "live_wallet_read" && pos.deposited === null && pos.shares !== null && pos.shares > 0) {
+        // Has vault shares but convertToAssets is unavailable on this vault — show share count
+        const shareStr = escapeMd(`${pos.shares.toFixed(6)} shares`);
+        lines.push(`• *${escapeMd(vs.vaultName)}*: ${shareStr} \\(${apyStr}\\)`);
+      } else if (pos.source === "live_wallet_read" && pos.shares !== null && pos.shares === 0) {
         lines.push(`• *${escapeMd(vs.vaultName)}*: ⏳ deposit pending \\(${apyStr}\\)`);
       } else {
         lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);

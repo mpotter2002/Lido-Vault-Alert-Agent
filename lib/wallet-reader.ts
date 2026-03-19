@@ -43,7 +43,7 @@ export interface WalletReadSuccess {
   claimableFormatted: number;
   totalShares: bigint;      // shares + claimableShares
   totalSharesFormatted: number;
-  deposited: number;        // underlying asset units (human-readable) for totalShares
+  deposited: number | null; // underlying asset units (human-readable); null if convertToAssets unavailable
   decimals: number;
   fetchedAt: string;
 }
@@ -117,13 +117,24 @@ export async function readWalletPosition(
 
     const totalShares = shares + claimableShares;
 
-    // 4. convertToAssets(totalShares) — if any shares exist; else 0 assets
-    let deposited = 0;
+    // 4. convertToAssets(totalShares) — if any shares exist; else 0 assets.
+    // Mellow flexible-vault deployments may revert this call (same oracle-context
+    // requirement as totalSupply()). Wrapped in its own try/catch so a revert here
+    // does not fail the entire position read — callers see deposited=null and
+    // can display the share count instead of a false zero.
+    let deposited: number | null = 0;
     if (totalShares > BigInt(0)) {
-      const cvtData = SEL_CONVERT_TO_ASSETS + encodeUint256(totalShares);
-      const cvtResult = await ethCall(contractAddress, cvtData, rpcUrl);
-      const rawAssets = decodeUint256(cvtResult);
-      deposited = Number(rawAssets) / Math.pow(10, safeDecimals);
+      try {
+        const cvtData = SEL_CONVERT_TO_ASSETS + encodeUint256(totalShares);
+        const cvtResult = await ethCall(contractAddress, cvtData, rpcUrl);
+        const rawAssets = decodeUint256(cvtResult);
+        deposited = Number(rawAssets) / Math.pow(10, safeDecimals);
+      } catch {
+        // convertToAssets not available on this vault (e.g. Mellow flexible vaults
+        // require price oracle context). Return null so the caller can show the share
+        // count rather than a misleading zero.
+        deposited = null;
+      }
     }
 
     const pow = Math.pow(10, safeDecimals);

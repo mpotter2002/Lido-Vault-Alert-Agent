@@ -185,7 +185,7 @@ export async function buildHealthResponse(
         note:
           `Live read at ${read.fetchedAt}. ` +
           `Liquid shares: ${read.sharesFormatted.toFixed(6)}${claimNote}. ` +
-          `Total underlying: ${read.deposited.toFixed(6)} ${pos.asset}.`,
+          `Total underlying: ${read.deposited !== null ? `${read.deposited.toFixed(6)} ${pos.asset}` : "unknown (convertToAssets unavailable)"}.`,
       };
     } else {
       walletPosition = {
