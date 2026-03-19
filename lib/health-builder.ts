@@ -195,7 +195,11 @@ export async function buildHealthResponse(
           : "unavailable"
         : "seeded_demo",
       asOf: new Date().toISOString(),
-      note: livePositionMeta ? "TVL and health from on-chain; APY from DeFiLlama; strategy weights seeded." : undefined,
+      note: livePositionMeta
+        ? pos.vaultId === "earnETH"
+          ? "TVL from Mellow API (vault-layer deposits). The Lido Earn app shows a higher figure that includes EigenLayer restaking overlay — both are correct for different accounting views."
+          : "TVL, APY, and allocation from live sources (Mellow API + on-chain RiskManager)."
+        : undefined,
     };
 
     return {

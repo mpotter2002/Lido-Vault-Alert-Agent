@@ -63,12 +63,28 @@ export async function POST(request: Request) {
     });
   }
 
-  // Send personalized message to each subscriber
+  const criticalAlerts = alerts.filter((a) => a.severity === "critical");
+
+  // Send personalized message to each subscriber (respecting their alert level)
   const results = await Promise.allSettled(
     subscribers.map(async (sub) => {
+      // Skip non-critical alerts for subscribers who only want critical
+      const relevantAlerts =
+        sub.alertLevel === "critical" ? criticalAlerts : alerts;
+
+      if (relevantAlerts.length === 0 && !dryRun) {
+        return {
+          chatId: sub.chatId,
+          wallet: sub.wallet,
+          sent: false,
+          skipped: true,
+          reason: `alertLevel=${sub.alertLevel}, no relevant alerts`,
+        };
+      }
+
       // Read wallet-specific position for this subscriber
       const health = await buildHealthResponse(sub.wallet);
-      const payload = composeTelegramMessage(sub.wallet, alerts, health.vaults);
+      const payload = composeTelegramMessage(sub.wallet, relevantAlerts, health.vaults);
 
       if (dryRun) {
         return {

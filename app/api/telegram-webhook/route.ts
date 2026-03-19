@@ -6,25 +6,33 @@
  *
  * Supported commands:
  *   /start or /help  — welcome message + command list
- *   /subscribe 0x... — register wallet address for alerts
+ *   /subscribe 0x... — register wallet address for alerts + onboarding
  *   /unsubscribe     — stop receiving alerts
  *   /status          — check current vault health snapshot
+ *   /alerts          — show or change alert level (critical / all)
  *
- * User flow:
- *   1. User searches for @YourBotUsername on Telegram
- *   2. Types /subscribe 0xTheirWallet
- *   3. From then on they receive alerts whenever the broadcast runs
+ * Onboarding flow:
+ *   1. User sends /subscribe 0xWallet
+ *   2. Bot confirms + asks alert sensitivity question
+ *   3. User replies "1" (critical only) or "2" (all alerts)
+ *   4. Bot confirms preference and starts monitoring
  */
 
 import { NextResponse } from "next/server";
-import { addSubscriber, removeSubscriber, getSubscribers } from "@/lib/subscribers";
+import {
+  addSubscriber,
+  removeSubscriber,
+  getSubscribers,
+  setAlertLevel,
+  clearPendingOnboarding,
+} from "@/lib/subscribers";
 import { buildLivePositions } from "@/lib/live-positions";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
-// Telegram send helper — plain text (no parse_mode) for bot responses
+// Telegram send helpers
 // ---------------------------------------------------------------------------
 
 async function reply(chatId: string, text: string): Promise<void> {
@@ -36,6 +44,14 @@ async function reply(chatId: string, text: string): Promise<void> {
     body: JSON.stringify({ chat_id: chatId, text }),
   });
 }
+
+
+const ONBOARDING_QUESTION =
+  `One quick question — how sensitive do you want alerts?\n\n` +
+  `Reply:\n` +
+  `1️⃣  Critical only — vault paused, TVL emergency\n` +
+  `2️⃣  All alerts — includes yield underperformance warnings\n\n` +
+  `You can change this anytime with /alerts`;
 
 // ---------------------------------------------------------------------------
 // Webhook handler
@@ -49,7 +65,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Telegram sends message or callback_query; we handle message only
   const message = body?.message as Record<string, unknown> | undefined;
   if (!message) return NextResponse.json({ ok: true });
 
@@ -58,6 +73,31 @@ export async function POST(request: Request) {
   const firstName = (message.from as Record<string, unknown>)?.first_name ?? "there";
 
   if (!chatId || !text) return NextResponse.json({ ok: true });
+
+  // ── Onboarding reply handler — check before command routing ────────────────
+  const sub = getSubscribers().find((s) => s.chatId === chatId);
+  if (sub?.pendingOnboarding && !text.startsWith("/")) {
+    if (text === "1") {
+      setAlertLevel(chatId, "critical");
+      await reply(
+        chatId,
+        `✅ Got it — critical alerts only.\n\n` +
+          `I'll only message you for serious issues like a paused vault or major TVL drop. ` +
+          `Type /alerts all anytime to switch to full alerts.`
+      );
+    } else if (text === "2") {
+      setAlertLevel(chatId, "all");
+      await reply(
+        chatId,
+        `✅ Got it — all alerts enabled.\n\n` +
+          `I'll message you for yield underperformance, rebalances, and any vault health changes. ` +
+          `Type /alerts critical anytime to switch to critical-only.`
+      );
+    } else {
+      await reply(chatId, `Please reply 1 or 2 to choose your alert level, or type /alerts to see options.`);
+    }
+    return NextResponse.json({ ok: true });
+  }
 
   // ── /start or /help ────────────────────────────────────────────────────────
   if (text.startsWith("/start") || text.startsWith("/help")) {
@@ -68,6 +108,7 @@ export async function POST(request: Request) {
         `Commands:\n` +
         `/subscribe 0xYourWallet — start monitoring your position\n` +
         `/status — check current vault health\n` +
+        `/alerts — view or change your alert sensitivity\n` +
         `/unsubscribe — stop receiving alerts\n` +
         `/help — show this message`
     );
@@ -99,7 +140,7 @@ export async function POST(request: Request) {
           `• Protocol allocation shifts\n` +
           `• TVL cap is approaching\n` +
           `• Vault health changes\n\n` +
-          `Type /status for a snapshot right now.`
+          ONBOARDING_QUESTION
       );
     } else {
       await reply(chatId, `❌ Failed to save your subscription. Please try again.`);
@@ -110,17 +151,51 @@ export async function POST(request: Request) {
   // ── /unsubscribe ───────────────────────────────────────────────────────────
   if (text.startsWith("/unsubscribe")) {
     removeSubscriber(chatId);
-    await reply(chatId, `✅ Unsubscribed. You won't receive any more alerts.\n\nType /subscribe 0xYourWallet anytime to re-subscribe.`);
+    await reply(
+      chatId,
+      `✅ Unsubscribed. You won't receive any more alerts.\n\nType /subscribe 0xYourWallet anytime to re-subscribe.`
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── /alerts [critical|all] ─────────────────────────────────────────────────
+  if (text.startsWith("/alerts")) {
+    const parts = text.split(/\s+/);
+    const arg = parts[1]?.toLowerCase();
+
+    if (!sub) {
+      await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (arg === "critical") {
+      setAlertLevel(chatId, "critical");
+      await reply(chatId, `✅ Alert level set to critical only.\n\nI'll only message you for serious vault issues.`);
+    } else if (arg === "all") {
+      setAlertLevel(chatId, "all");
+      await reply(chatId, `✅ Alert level set to all alerts.\n\nYou'll receive warnings for yield underperformance and rebalances too.`);
+    } else {
+      const current = sub.alertLevel === "critical" ? "Critical only" : "All alerts";
+      await reply(
+        chatId,
+        `Your current alert level: ${current}\n\n` +
+          `To change:\n` +
+          `/alerts critical — serious issues only\n` +
+          `/alerts all — all warnings and updates`
+      );
+    }
     return NextResponse.json({ ok: true });
   }
 
   // ── /status ────────────────────────────────────────────────────────────────
   if (text.startsWith("/status")) {
-    const sub = getSubscribers().find((s) => s.chatId === chatId);
     if (!sub) {
       await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
       return NextResponse.json({ ok: true });
     }
+
+    // Clear any pending onboarding if they're using the bot
+    if (sub.pendingOnboarding) clearPendingOnboarding(chatId);
 
     await reply(chatId, `⏳ Fetching live vault data...`);
 
