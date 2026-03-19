@@ -2,13 +2,16 @@
  * POST /api/telegram-webhook
  *
  * Supported commands:
- *   /start or /help     — welcome + command list
- *   /subscribe 0x...    — register wallet + onboarding (alert level → yield floor → email)
- *   /unsubscribe        — stop receiving alerts
- *   /status             — live vault health snapshot
- *   /alerts [critical|all] — view or change alert sensitivity
- *   /setfloor [N]       — view or change personal yield floor (%)
- *   /setemail [addr]    — view or change email for alert notifications
+ *   /start or /help           — welcome + command list
+ *   /subscribe 0x...          — register first wallet + onboarding (alert level → yield floor → email)
+ *   /addwallet 0x...          — add another wallet (for already-subscribed users)
+ *   /wallets                  — list all tracked wallets
+ *   /removewallet 0x...       — remove a tracked wallet (must have more than one)
+ *   /unsubscribe              — stop receiving alerts and remove all data
+ *   /status                   — live vault health snapshot (all wallets combined)
+ *   /alerts [critical|all]    — view or change alert sensitivity
+ *   /setfloor [N]             — view or change personal yield floor (%)
+ *   /setemail [addr]          — view or change email for alert notifications
  *
  * Onboarding (three-step, triggered after /subscribe):
  *   Step 1 — user replies "1" or "2" to choose alert level
@@ -19,8 +22,11 @@
 import { NextResponse } from "next/server";
 import {
   addSubscriber,
+  addWallet,
+  removeWallet,
   removeSubscriber,
   getSubscribers,
+  getWallets,
   setAlertLevel,
   setYieldFloor,
   setYieldFloorAndAdvance,
@@ -31,6 +37,7 @@ import { buildLivePositions } from "@/lib/live-positions";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
+import { VaultHealthSummary } from "@/lib/domain";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,6 +50,48 @@ async function reply(chatId: string, text: string): Promise<void> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text }),
+  });
+}
+
+/**
+ * Fetch health for multiple wallets and merge their vault positions.
+ * Vault-level data (APY, TVL, health) comes from the first wallet's response.
+ * walletPosition.deposited and .shares are summed across all wallets.
+ */
+async function buildMergedHealth(
+  wallets: string[],
+  overridePositions?: Awaited<ReturnType<typeof buildLivePositions>>["positions"]
+): Promise<VaultHealthSummary[]> {
+  if (wallets.length === 0) return [];
+  const allHealthResponses = await Promise.all(
+    wallets.map((w) => buildHealthResponse(w, overridePositions))
+  );
+  const base = allHealthResponses[0].vaults;
+  if (allHealthResponses.length === 1) return base;
+
+  return base.map((baseSummary) => {
+    let totalDeposited = baseSummary.walletPosition.deposited ?? 0;
+    let totalShares = baseSummary.walletPosition.shares ?? 0;
+    let anyLiveRead = baseSummary.walletPosition.source === "live_wallet_read";
+
+    for (let i = 1; i < allHealthResponses.length; i++) {
+      const match = allHealthResponses[i].vaults.find((s) => s.vaultId === baseSummary.vaultId);
+      if (match?.walletPosition.source === "live_wallet_read") {
+        totalDeposited += match.walletPosition.deposited ?? 0;
+        totalShares += match.walletPosition.shares ?? 0;
+        anyLiveRead = true;
+      }
+    }
+
+    return {
+      ...baseSummary,
+      walletPosition: {
+        source: anyLiveRead ? ("live_wallet_read" as const) : ("unavailable" as const),
+        deposited: anyLiveRead ? totalDeposited : null,
+        shares: anyLiveRead ? totalShares : null,
+        note: baseSummary.walletPosition.note,
+      },
+    };
   });
 }
 
@@ -64,6 +113,10 @@ const EMAIL_QUESTION =
   `Reply with your email address to get alert emails alongside Telegram messages.\n` +
   `Or reply skip to use Telegram only.\n\n` +
   `You can update this anytime with /setemail`;
+
+const ONBOARDING_COMPLETE_SUFFIX =
+  `\n\nTracking another wallet? Use /addwallet 0xYourOtherWallet to add it.\n` +
+  `Type /status to see a live snapshot anytime.`;
 
 // ---------------------------------------------------------------------------
 // Webhook handler
@@ -133,16 +186,16 @@ export async function POST(request: Request) {
         await reply(
           chatId,
           `✅ Telegram only — got it. You're all set!\n\n` +
-            `Type /status to see a live snapshot anytime.\n` +
-            `To add email later: /setemail you@example.com`
+            `To add email later: /setemail you@example.com` +
+            ONBOARDING_COMPLETE_SUFFIX
         );
       } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
         await setEmail(chatId, text.toLowerCase());
         await reply(
           chatId,
           `✅ Email set to ${text.toLowerCase()}. You're all set!\n\n` +
-            `You'll receive alerts on Telegram and by email.\n` +
-            `Type /status to see a live snapshot anytime.`
+            `You'll receive alerts on Telegram and by email.` +
+            ONBOARDING_COMPLETE_SUFFIX
         );
       } else {
         await reply(chatId, `That doesn't look like a valid email. Try again or reply skip.`);
@@ -159,6 +212,9 @@ export async function POST(request: Request) {
         `I monitor Lido Earn vaults (EarnETH and EarnUSD) and send you plain-language alerts when something changes — yield drops, rebalances, benchmark underperformance.\n\n` +
         `Commands:\n` +
         `/subscribe 0xYourWallet — start monitoring your position\n` +
+        `/addwallet 0xYourWallet — track an additional wallet\n` +
+        `/wallets — list your tracked wallets\n` +
+        `/removewallet 0xYourWallet — stop tracking a wallet\n` +
         `/status — check current vault health\n` +
         `/alerts — view or change alert sensitivity\n` +
         `/setfloor — view or change your minimum APY threshold\n` +
@@ -179,6 +235,32 @@ export async function POST(request: Request) {
       );
       return NextResponse.json({ ok: true });
     }
+
+    // If already subscribed, just add the wallet without resetting preferences
+    if (sub) {
+      const alreadyTracked = sub.wallets.some((w) => w.toLowerCase() === wallet.toLowerCase());
+      if (alreadyTracked) {
+        await reply(
+          chatId,
+          `That wallet is already being tracked.\n\nUse /wallets to see all your tracked wallets.`
+        );
+        return NextResponse.json({ ok: true });
+      }
+      const ok = await addWallet(chatId, wallet);
+      if (ok) {
+        await reply(
+          chatId,
+          `✅ Wallet added: ${wallet.slice(0, 6)}...${wallet.slice(-4)}\n\n` +
+            `You now have ${sub.wallets.length + 1} tracked wallets.\n` +
+            `Use /wallets to see them all or /status for a live snapshot.`
+        );
+      } else {
+        await reply(chatId, `❌ Failed to add wallet. Please try again.`);
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // New subscriber — full onboarding
     const ok = await addSubscriber(chatId, wallet);
     if (ok) {
       await reply(
@@ -195,6 +277,106 @@ export async function POST(request: Request) {
       );
     } else {
       await reply(chatId, `❌ Failed to save your subscription. Please try again.`);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── /addwallet 0x... ───────────────────────────────────────────────────────
+  if (text.startsWith("/addwallet")) {
+    if (!sub) {
+      await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
+      return NextResponse.json({ ok: true });
+    }
+    const wallet = text.split(/\s+/)[1]?.trim() ?? "";
+    if (!wallet.match(/^0x[0-9a-fA-F]{40}$/)) {
+      await reply(
+        chatId,
+        `❌ Invalid wallet address.\n\nUsage:\n/addwallet 0xYourWalletAddress`
+      );
+      return NextResponse.json({ ok: true });
+    }
+    const alreadyTracked = sub.wallets.some((w) => w.toLowerCase() === wallet.toLowerCase());
+    if (alreadyTracked) {
+      await reply(
+        chatId,
+        `That wallet is already being tracked.\n\nUse /wallets to see all your tracked wallets.`
+      );
+      return NextResponse.json({ ok: true });
+    }
+    const ok = await addWallet(chatId, wallet);
+    if (ok) {
+      await reply(
+        chatId,
+        `✅ Wallet added: ${wallet.slice(0, 6)}...${wallet.slice(-4)}\n\n` +
+          `You now have ${sub.wallets.length + 1} tracked wallets.\n` +
+          `Use /wallets to see them all or /status for a live snapshot.`
+      );
+    } else {
+      await reply(chatId, `❌ Failed to add wallet. Please try again.`);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── /wallets ───────────────────────────────────────────────────────────────
+  if (text.startsWith("/wallets")) {
+    if (!sub) {
+      await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
+      return NextResponse.json({ ok: true });
+    }
+    const wallets = await getWallets(chatId);
+    if (wallets.length === 0) {
+      await reply(chatId, `No wallets tracked. Use /addwallet 0xYourWallet to add one.`);
+      return NextResponse.json({ ok: true });
+    }
+    const list = wallets
+      .map((w, i) => `${i + 1}. ${w.slice(0, 6)}...${w.slice(-4)} (${w})`)
+      .join("\n");
+    await reply(
+      chatId,
+      `Your tracked wallets (${wallets.length}):\n\n${list}\n\n` +
+        `Add another: /addwallet 0xYourWallet\n` +
+        `Remove one: /removewallet 0xYourWallet`
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── /removewallet 0x... ────────────────────────────────────────────────────
+  if (text.startsWith("/removewallet")) {
+    if (!sub) {
+      await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
+      return NextResponse.json({ ok: true });
+    }
+    const wallet = text.split(/\s+/)[1]?.trim() ?? "";
+    if (!wallet.match(/^0x[0-9a-fA-F]{40}$/)) {
+      await reply(
+        chatId,
+        `❌ Invalid wallet address.\n\nUsage:\n/removewallet 0xYourWalletAddress`
+      );
+      return NextResponse.json({ ok: true });
+    }
+    const tracked = sub.wallets.some((w) => w.toLowerCase() === wallet.toLowerCase());
+    if (!tracked) {
+      await reply(
+        chatId,
+        `That wallet isn't being tracked.\n\nUse /wallets to see your tracked wallets.`
+      );
+      return NextResponse.json({ ok: true });
+    }
+    const result = await removeWallet(chatId, wallet);
+    if (result.isLastWallet) {
+      await reply(
+        chatId,
+        `❌ Can't remove your only wallet.\n\n` +
+          `To stop receiving alerts entirely, use /unsubscribe.`
+      );
+    } else if (result.ok) {
+      await reply(
+        chatId,
+        `✅ Removed wallet: ${wallet.slice(0, 6)}...${wallet.slice(-4)}\n\n` +
+          `Use /wallets to see your remaining tracked wallets.`
+      );
+    } else {
+      await reply(chatId, `❌ Failed to remove wallet. Please try again.`);
     }
     return NextResponse.json({ ok: true });
   }
@@ -310,11 +492,11 @@ export async function POST(request: Request) {
     await reply(chatId, `⏳ Fetching live vault data...`);
     try {
       const { positions } = await buildLivePositions();
-      const [{ alerts }, health] = await Promise.all([
+      const [{ alerts }, mergedVaults] = await Promise.all([
         generateEnrichedAlerts(positions),
-        buildHealthResponse(sub.wallet),
+        buildMergedHealth(sub.wallets, positions),
       ]);
-      const payload = composeTelegramMessage(sub.wallet, alerts, health.vaults);
+      const payload = composeTelegramMessage(sub.wallets, alerts, mergedVaults);
       const token = process.env.TELEGRAM_BOT_TOKEN;
       if (token) {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

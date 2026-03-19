@@ -23,6 +23,49 @@ import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage, formatEmailAlert } from "@/lib/formatters";
 import { sendEmail } from "@/lib/email";
+import { VaultHealthSummary } from "@/lib/domain";
+
+/**
+ * Fetch health for multiple wallets and merge their vault positions.
+ * Vault-level data (APY, TVL, health) comes from the first wallet's response.
+ * walletPosition.deposited and .shares are summed across all wallets.
+ */
+async function buildMergedHealth(
+  wallets: string[],
+  overridePositions?: Awaited<ReturnType<typeof buildLivePositions>>["positions"]
+): Promise<VaultHealthSummary[]> {
+  if (wallets.length === 0) return [];
+  const allHealthResponses = await Promise.all(
+    wallets.map((w) => buildHealthResponse(w, overridePositions))
+  );
+  const base = allHealthResponses[0].vaults;
+  if (allHealthResponses.length === 1) return base;
+
+  return base.map((baseSummary) => {
+    let totalDeposited = baseSummary.walletPosition.deposited ?? 0;
+    let totalShares = baseSummary.walletPosition.shares ?? 0;
+    let anyLiveRead = baseSummary.walletPosition.source === "live_wallet_read";
+
+    for (let i = 1; i < allHealthResponses.length; i++) {
+      const match = allHealthResponses[i].vaults.find((s) => s.vaultId === baseSummary.vaultId);
+      if (match?.walletPosition.source === "live_wallet_read") {
+        totalDeposited += match.walletPosition.deposited ?? 0;
+        totalShares += match.walletPosition.shares ?? 0;
+        anyLiveRead = true;
+      }
+    }
+
+    return {
+      ...baseSummary,
+      walletPosition: {
+        source: anyLiveRead ? ("live_wallet_read" as const) : ("unavailable" as const),
+        deposited: anyLiveRead ? totalDeposited : null,
+        shares: anyLiveRead ? totalShares : null,
+        note: baseSummary.walletPosition.note,
+      },
+    };
+  });
+}
 
 export async function POST(request: Request) {
   let dryRun = false;
@@ -103,22 +146,22 @@ export async function POST(request: Request) {
       if (relevantAlerts.length === 0 && !dryRun) {
         return {
           chatId: sub.chatId,
-          wallet: sub.wallet,
+          wallets: sub.wallets,
           sent: false,
           skipped: true,
           reason: `alertLevel=${sub.alertLevel}, floor=${sub.yieldFloorPct}%, no relevant alerts`,
         };
       }
 
-      // Read wallet-specific position for this subscriber
-      const health = await buildHealthResponse(sub.wallet);
-      const payload = composeTelegramMessage(sub.wallet, relevantAlerts, health.vaults);
+      // Read wallet positions for all tracked wallets and merge them
+      const mergedVaults = await buildMergedHealth(sub.wallets, positions);
+      const payload = composeTelegramMessage(sub.wallets, relevantAlerts, mergedVaults);
 
       if (dryRun) {
-        const { subject, body } = formatEmailAlert(sub.wallet, relevantAlerts, health.vaults);
+        const { subject, body } = formatEmailAlert(sub.wallets[0] ?? sub.wallet, relevantAlerts, mergedVaults);
         return {
           chatId: sub.chatId,
-          wallet: sub.wallet,
+          wallets: sub.wallets,
           sent: false,
           dryRun: true,
           alertCount: alerts.length,
@@ -147,13 +190,13 @@ export async function POST(request: Request) {
       // Also send email if subscriber has one set
       let emailResult: { ok: boolean; error?: string } | undefined;
       if (sub.email) {
-        const { subject, body } = formatEmailAlert(sub.wallet, relevantAlerts, health.vaults);
+        const { subject, body } = formatEmailAlert(sub.wallets[0] ?? sub.wallet, relevantAlerts, mergedVaults);
         emailResult = await sendEmail(sub.email, subject, body);
       }
 
       return {
         chatId: sub.chatId,
-        wallet: sub.wallet,
+        wallets: sub.wallets,
         sent: res.ok,
         alertCount: alerts.length,
         ...(sub.email ? { email: sub.email, emailSent: emailResult?.ok, emailError: emailResult?.error } : {}),
@@ -165,7 +208,7 @@ export async function POST(request: Request) {
   const settled = results.map((r, i) =>
     r.status === "fulfilled"
       ? r.value
-      : { chatId: subscribers[i].chatId, wallet: subscribers[i].wallet, sent: false, error: String(r.reason) }
+      : { chatId: subscribers[i].chatId, wallets: subscribers[i].wallets, sent: false, error: String(r.reason) }
   );
 
   const sentCount = settled.filter((r) => r.sent).length;
