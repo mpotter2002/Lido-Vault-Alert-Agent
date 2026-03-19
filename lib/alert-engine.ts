@@ -36,14 +36,13 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
   const alerts: Alert[] = [];
 
   for (const pos of positions) {
-    // APY drop > 15% relative in 24h
+    // APY drop > 1pp absolute in 24h
+    // At typical vault APYs (~4–6%), a 1 percentage-point drop is significant.
     // Suppressed when vault metrics are seeded: apyDelta24h is a fabricated demo value,
     // not a real observed change. Firing a "drop" alert from invented data is misleading.
-    // When live vault APY is wired, this block will fire on real deltas.
     if (pos.vaultMetricsSource !== "seeded_demo" && pos.apyDelta24h < 0) {
-      const prevAPY = pos.currentAPY - pos.apyDelta24h;
-      const relDrop = Math.abs(pos.apyDelta24h) / prevAPY;
-      if (relDrop >= 0.15) {
+      if (Math.abs(pos.apyDelta24h) >= 1.0) {
+        const prevAPY = pos.currentAPY - pos.apyDelta24h;
         const prevFormatted = prevAPY.toFixed(1);
         alerts.push({
           id: makeId(),

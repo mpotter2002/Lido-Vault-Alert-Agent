@@ -203,7 +203,7 @@ export async function POST(request: Request) {
           `  • Vault health degraded\n\n` +
           `/alerts all — all warnings and updates\n` +
           `  • Everything in critical, plus:\n` +
-          `  • APY drop >15% in 24h\n` +
+          `  • APY drop >1pp in 24h\n` +
           `  • Yield trailing stETH / Aave benchmark\n` +
           `  • TVL cap approaching\n` +
           `  • Protocol allocation shift\n` +
