@@ -58,27 +58,28 @@ async function reply(chatId: string, text: string): Promise<void> {
  * Vault-level data (APY, TVL, health) comes from the first wallet's response.
  * walletPosition.deposited and .shares are summed across all wallets.
  */
-async function buildMergedHealth(
-  wallets: string[],
-  overridePositions?: Awaited<ReturnType<typeof buildLivePositions>>["positions"]
-): Promise<VaultHealthSummary[]> {
+async function buildMergedHealth(wallets: string[]): Promise<VaultHealthSummary[]> {
   if (wallets.length === 0) return [];
-  const allHealthResponses = await Promise.all(
-    wallets.map((w) => buildHealthResponse(w, overridePositions))
-  );
+  // Each call fetches its own live data so livePositionMeta is populated correctly.
+  const allHealthResponses = await Promise.all(wallets.map((w) => buildHealthResponse(w)));
   const base = allHealthResponses[0].vaults;
   if (allHealthResponses.length === 1) return base;
 
   return base.map((baseSummary) => {
-    let totalDeposited = baseSummary.walletPosition.deposited ?? 0;
-    let totalShares = baseSummary.walletPosition.shares ?? 0;
+    let totalDeposited: number | null = baseSummary.walletPosition.deposited;
+    let totalShares: number | null = baseSummary.walletPosition.shares;
     let anyLiveRead = baseSummary.walletPosition.source === "live_wallet_read";
 
     for (let i = 1; i < allHealthResponses.length; i++) {
       const match = allHealthResponses[i].vaults.find((s) => s.vaultId === baseSummary.vaultId);
       if (match?.walletPosition.source === "live_wallet_read") {
-        totalDeposited += match.walletPosition.deposited ?? 0;
-        totalShares += match.walletPosition.shares ?? 0;
+        // Sum deposited amounts, preserving null only if ALL wallets have null
+        if (match.walletPosition.deposited !== null) {
+          totalDeposited = (totalDeposited ?? 0) + match.walletPosition.deposited;
+        }
+        if (match.walletPosition.shares !== null) {
+          totalShares = (totalShares ?? 0) + match.walletPosition.shares;
+        }
         anyLiveRead = true;
       }
     }
@@ -494,7 +495,7 @@ export async function POST(request: Request) {
       const { positions } = await buildLivePositions();
       const [{ alerts }, mergedVaults] = await Promise.all([
         generateEnrichedAlerts(positions),
-        buildMergedHealth(sub.wallets, positions),
+        buildMergedHealth(sub.wallets),
       ]);
       const payload = composeTelegramMessage(sub.wallets, alerts, mergedVaults);
       const token = process.env.TELEGRAM_BOT_TOKEN;
