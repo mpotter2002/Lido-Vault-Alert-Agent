@@ -191,7 +191,7 @@ export default function Home() {
 
         {/* Hero */}
         <div style={{ textAlign: "center", marginBottom: 64 }}>
-          <Image src="/logo.png" alt="Lido Vault Bot" width={144} height={144} style={{ borderRadius: 36, imageRendering: "pixelated", marginBottom: 24 }} />
+          <Image src="/logo.png" alt="Lido Vault Bot" width={122} height={122} style={{ borderRadius: 30, imageRendering: "pixelated", marginBottom: 24 }} />
           <h1 style={{
             fontSize: "clamp(36px, 6vw, 54px)",
             fontWeight: 800, letterSpacing: "-0.04em", lineHeight: 1.08,
