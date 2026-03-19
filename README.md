@@ -19,6 +19,7 @@ A live monitoring agent and Telegram bot for [Lido Earn](https://lido.fi/earn) v
 | `/status` | Live vault snapshot with your position |
 | `/alerts [critical\|all]` | View or change alert sensitivity |
 | `/setfloor [N]` | Set minimum acceptable APY (%) |
+| `/setemail [addr\|remove]` | Add or remove email for alert notifications |
 | `/unsubscribe` | Stop receiving alerts |
 | `/help` | Show command list |
 
@@ -69,6 +70,16 @@ TELEGRAM_BOT_TOKEN           # From @BotFather
 SUPABASE_URL                 # Your Supabase project URL
 SUPABASE_SERVICE_ROLE_KEY    # Supabase service role key (server-side only)
 APP_URL                      # Your deployed URL (for webhook registration)
+RESEND_API_KEY               # Optional — email alerts via Resend
+RESEND_FROM_EMAIL            # Optional — verified sending address (e.g. alerts@yourdomain.com)
+```
+
+### Supabase schema migration (email support)
+
+If adding email to an existing deployment, run this in your Supabase SQL editor:
+
+```sql
+ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS email TEXT;
 ```
 
 After deploying, register the Telegram webhook once:
