@@ -41,4 +41,6 @@ body {
   .nav-title { font-size: 11px !important; }
   .nav-bar { padding: 0 16px !important; }
   .nav-version { display: none; }
+  .nav-open-bot { font-size: 11px !important; padding: 5px 10px !important; white-space: nowrap; }
+  .nav-github { display: none; }
 }

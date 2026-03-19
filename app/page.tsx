@@ -161,19 +161,19 @@ export default function Home() {
           }}>v1.0</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <a href={BOT_URL} target="_blank" rel="noopener noreferrer" style={{
+          <a href={BOT_URL} target="_blank" rel="noopener noreferrer" className="nav-open-bot" style={{
             fontSize: 13, fontWeight: 600, color: "#fff",
             textDecoration: "none", padding: "5px 16px",
             background: c.accent,
             borderRadius: 20, letterSpacing: "-0.01em",
-            transition: "opacity 0.15s",
+            transition: "opacity 0.15s", whiteSpace: "nowrap",
           }}
             onMouseEnter={(e) => ((e.target as HTMLElement).style.opacity = "0.85")}
             onMouseLeave={(e) => ((e.target as HTMLElement).style.opacity = "1")}
           >
             Open Bot →
           </a>
-          <a href="https://github.com/mpotter2002/Lido-Vault-Alert-Agent" target="_blank" rel="noopener noreferrer" style={{
+          <a href="https://github.com/mpotter2002/Lido-Vault-Alert-Agent" target="_blank" rel="noopener noreferrer" className="nav-github" style={{
             fontSize: 13, fontWeight: 500, color: c.text2,
             textDecoration: "none", padding: "5px 14px",
             border: `1px solid ${c.border}`, borderRadius: 20, letterSpacing: "-0.01em",
