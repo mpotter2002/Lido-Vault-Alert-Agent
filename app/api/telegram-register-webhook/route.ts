@@ -6,7 +6,7 @@
  *
  * Required env vars:
  *   TELEGRAM_BOT_TOKEN — your bot token from @BotFather
- *   NEXT_PUBLIC_APP_URL — your deployed URL, e.g. https://yourapp.vercel.app
+ *   APP_URL — your deployed URL, e.g. https://yourapp.vercel.app
  *
  * After calling this, Telegram will POST to:
  *   https://yourapp.vercel.app/api/telegram-webhook
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? searchParams.get("url");
+  const appUrl = process.env.APP_URL ?? searchParams.get("url");
 
   // Info mode — show current webhook status
   if (searchParams.get("info") === "1") {
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         error:
-          "NEXT_PUBLIC_APP_URL env var not set. " +
+          "APP_URL env var not set. " +
           "Set it to your deployed URL (e.g. https://yourapp.vercel.app) or pass ?url=https://... as a query param.",
         hint: "For local testing with ngrok: GET /api/telegram-register-webhook?url=https://your-ngrok-url.ngrok.io",
       },
