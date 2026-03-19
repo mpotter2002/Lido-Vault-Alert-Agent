@@ -60,11 +60,12 @@ export interface TelegramMessagePayload {
  * by severity before send, or building downstream summaries.
  */
 export function composeTelegramMessage(
-  wallet: string,
+  wallets: string | string[],
   alerts: Alert[],
   vaultSummaries: VaultHealthSummary[],
   options: { silent?: boolean } = {}
 ): TelegramMessagePayload {
+  const walletList = Array.isArray(wallets) ? wallets : [wallets];
   const critical = alerts.filter((a) => a.severity === "critical");
   const warnings = alerts.filter((a) => a.severity === "warning");
   const infos = alerts.filter((a) => a.severity === "info");
@@ -78,11 +79,16 @@ export function composeTelegramMessage(
     ? `${warnings.length} warning${warnings.length > 1 ? "s" : ""}`
     : "All clear";
 
-  const shortWallet = `${wallet.slice(0, 6)}…${wallet.slice(-4)}`;
+  const walletLabel =
+    walletList.length === 1
+      ? `Wallet: \`${walletList[0].slice(0, 6)}…${walletList[0].slice(-4)}\``
+      : walletList.length === 2
+      ? `Wallets: \`${walletList[0].slice(0, 6)}…${walletList[0].slice(-4)}\`, \`${walletList[1].slice(0, 6)}…${walletList[1].slice(-4)}\``
+      : `Wallets: \`${walletList[0].slice(0, 6)}…${walletList[0].slice(-4)}\` \\+${walletList.length - 1} more`;
 
   const lines: string[] = [];
   lines.push(`${statusEmoji} *Lido Vault Monitor* \\— ${escapeMd(statusLabel)}`);
-  lines.push(`Wallet: \`${shortWallet}\``);
+  lines.push(walletLabel);
   lines.push("");
 
   // Wallet position — always shown
