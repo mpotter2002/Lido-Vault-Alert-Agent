@@ -140,7 +140,7 @@ export default function Home() {
   return (
     <>
       {/* Nav */}
-      <nav style={{
+      <nav className="nav-bar" style={{
         position: "sticky", top: 0, zIndex: 100,
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "0 32px", height: 64,
@@ -151,10 +151,10 @@ export default function Home() {
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <Image src="/logo.png" alt="Lido Vault Bot" width={26} height={26} style={{ borderRadius: 6, imageRendering: "pixelated" }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: c.text, letterSpacing: "-0.02em" }}>
+          <span className="nav-title" style={{ fontSize: 14, fontWeight: 600, color: c.text, letterSpacing: "-0.02em" }}>
             Lido Vault Position Monitor + Alert Agent
           </span>
-          <span style={{
+          <span className="nav-version" style={{
             fontSize: 11, fontWeight: 500, color: c.text3,
             background: c.surface, border: `1px solid ${c.border}`,
             borderRadius: 20, padding: "1px 8px", fontFamily: c.mono,
