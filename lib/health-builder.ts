@@ -4,62 +4,144 @@ import { generateEnrichedAlerts } from "./alert-engine";
 import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
 import { readWalletPosition } from "./wallet-reader";
+import { buildLivePositions, LivePositionMeta } from "./live-positions";
 
-function buildNote(benchmarkSources: Map<string, string>): string {
-  // Build a note that accurately reflects data provenance.
-  const bmLines: string[] = [];
+// ---------------------------------------------------------------------------
+// Response note builder
+// ---------------------------------------------------------------------------
+
+function buildNote(
+  livePositionMeta: LivePositionMeta | null,
+  benchmarkSources: Map<string, string>
+): string {
+  const parts: string[] = [];
+
+  if (livePositionMeta) {
+    const tvlLive: string[] = [];
+    const tvlUnavail: string[] = [];
+    const apyLive: string[] = [];
+    const apyUnavail: string[] = [];
+
+    livePositionMeta.vaultSources.forEach(({ tvl, apy }, vaultId) => {
+      if (tvl === "live" || tvl === "partial") tvlLive.push(vaultId);
+      else tvlUnavail.push(vaultId);
+      if (apy === "live") apyLive.push(vaultId);
+      else apyUnavail.push(vaultId);
+    });
+
+    if (tvlLive.length)
+      parts.push(`TVL live (on-chain totalAssets): ${tvlLive.join(", ")}`);
+    if (tvlUnavail.length)
+      parts.push(`TVL unavailable (RPC error): ${tvlUnavail.join(", ")}`);
+    if (apyLive.length)
+      parts.push(`APY live (DeFiLlama Mellow vaults): ${apyLive.join(", ")}`);
+    if (apyUnavail.length)
+      parts.push(`APY unavailable (not found in DeFiLlama): ${apyUnavail.join(", ")}`);
+  } else {
+    parts.push("Vault-level metrics (TVL, APY, health) are seeded demo data.");
+  }
+
+  // Allocation source summary
+  if (livePositionMeta) {
+    const allocLive: string[] = [];
+    const allocUnavail: string[] = [];
+    livePositionMeta.vaultSources.forEach(({ allocation }, vaultId) => {
+      if (allocation === "live" || allocation === "partial") allocLive.push(vaultId);
+      else if (allocation === "unavailable") allocUnavail.push(vaultId);
+    });
+    if (allocLive.length)
+      parts.push(`Allocation weights live (on-chain subvault reads): ${allocLive.join(", ")}`);
+    if (allocUnavail.length)
+      parts.push(`Allocation weights unavailable: ${allocUnavail.join(", ")}`);
+  }
+  parts.push(
+    "Wallet position (deposited, shares) is read live — liquid balanceOf + Mellow claimableSharesOf."
+  );
+
   benchmarkSources.forEach((source, vaultId) => {
-    const api = vaultId === "earnETH" ? "Lido staking-stats API" : "DeFiLlama yields API";
+    const api =
+      vaultId === "earnETH" ? "Lido staking-stats API" : "DeFiLlama yields API";
     if (source === "live") {
-      bmLines.push(`${vaultId} benchmark: live (${api})`);
+      parts.push(`${vaultId} benchmark: live (${api})`);
     } else if (source === "cached_last_known_good") {
-      bmLines.push(`${vaultId} benchmark: stale cached value — live fetch failed, using last successful real read`);
+      parts.push(
+        `${vaultId} benchmark: stale cache — live fetch failed, using last known-good`
+      );
     } else if (source === "unavailable") {
-      bmLines.push(`${vaultId} benchmark: unavailable — live fetch failed and no cached value exists; benchmark alerts suppressed`);
-    } else {
-      bmLines.push(`${vaultId} benchmark: seeded demo value (explicit demo mode)`);
+      parts.push(
+        `${vaultId} benchmark: unavailable — fetch failed, no cache; benchmark alerts suppressed`
+      );
     }
   });
-  const bmSummary = bmLines.length
-    ? `Benchmark APYs — ${bmLines.join("; ")}. `
-    : "Benchmark values are unavailable. ";
 
-  return (
-    "Vault-level metrics (APY, TVL, health, allocation) are seeded demo data. " +
-    "Wallet-specific position (deposited, shares) is attempted via live on-chain read — " +
-    "see walletPosition.source on each vault for the actual outcome. " +
-    bmSummary +
-    "See /api/alerts, /api/yield-floor, /api/telegram-preview, /api/email-preview for other surfaces."
-  );
+  return parts.join(". ") + ".";
 }
 
-const VAULT_DATA_FRESHNESS: SourceFreshness = {
+// ---------------------------------------------------------------------------
+// Data mode determination
+// ---------------------------------------------------------------------------
+
+function resolveDataMode(
+  livePositionMeta: LivePositionMeta | null
+): "live" | "partial_live" | "seeded_demo" {
+  if (!livePositionMeta) return "seeded_demo";
+  let anyLive = false;
+  let anyUnavail = false;
+  livePositionMeta.vaultSources.forEach(({ tvl, apy }) => {
+    if (tvl === "live" || apy === "live") anyLive = true;
+    if (tvl === "unavailable" && apy === "unavailable") anyUnavail = true;
+  });
+  if (anyLive && anyUnavail) return "partial_live";
+  if (anyLive) return "partial_live"; // strategy weights are still seeded
+  return "seeded_demo";
+}
+
+// ---------------------------------------------------------------------------
+// Freshness tag for allocation snapshots
+// ---------------------------------------------------------------------------
+
+const ALLOCATION_FRESHNESS: SourceFreshness = {
   source: "seeded_demo",
   asOf: new Date().toISOString(),
   note:
-    "Vault state (APY, TVL, health, strategies) is seeded demo data. " +
-    "Wallet balance read is attempted live from the Ethereum mainnet contract. " +
-    "Wire Lido JS SDK / EVM calls to replace vault state with live data.",
+    "Strategy weights are seeded — Mellow subvault allocation enumeration is not yet wired. " +
+    "Tracked as a follow-up; all other vault metrics are live.",
 };
 
+// ---------------------------------------------------------------------------
+// Core builder — used by /api/health and the Telegram delivery path
+// ---------------------------------------------------------------------------
+
 /**
- * Build the full agent health response from a set of VaultPositions.
+ * Build the full agent health response from live on-chain + DeFiLlama data.
  *
- * Wallet position (deposited, shares) is fetched live from the on-chain contracts
- * for the given wallet address.  If the read fails for any vault (RPC error,
- * contract not found, timeout) that vault's walletPosition falls back to
- * { source: "unavailable", reason: "..." } — the rest of the response is unaffected.
+ * Vault-level fields (TVL, APY, health) are fetched live.
+ * Wallet position (deposited, shares) is read live via balanceOf + claimableSharesOf.
+ * Strategy weights remain seeded (labeled clearly in the response note).
  *
- * This is the single source of truth consumed by /api/health, /api/yield-floor,
- * and the preview formatters.
+ * If ANY live read fails, that field falls back gracefully and is labeled in the note.
  */
 export async function buildHealthResponse(
   wallet: string,
-  positions: VaultPosition[]
+  // Pass explicit positions to override live reads (e.g. for demo/test routes).
+  // If omitted, live positions are built automatically.
+  overridePositions?: VaultPosition[]
 ): Promise<AgentHealthResponse> {
-  const { alerts, benchmarks, allocationSnapshots } = await generateEnrichedAlerts(positions);
+  let positions: VaultPosition[];
+  let livePositionMeta: LivePositionMeta | null = null;
 
-  // Attempt live wallet reads for all vaults in parallel.
+  if (overridePositions) {
+    positions = overridePositions;
+  } else {
+    const result = await buildLivePositions();
+    positions = result.positions;
+    livePositionMeta = result.meta;
+  }
+
+  const { alerts, benchmarks, allocationSnapshots } =
+    await generateEnrichedAlerts(positions);
+
+  // Live wallet reads — liquid shares + Mellow claimable shares
   const walletReads = await Promise.all(
     positions.map((pos) => readWalletPosition(wallet, pos.contractAddress))
   );
@@ -67,6 +149,10 @@ export async function buildHealthResponse(
   const vaults: VaultHealthSummary[] = positions.map((pos, idx) => {
     const bm = benchmarks.get(pos.vaultId)!;
     const alloc = allocationSnapshots.get(pos.vaultId)!;
+
+    // Stamp allocation freshness
+    alloc.freshness = ALLOCATION_FRESHNESS;
+
     const posAlerts = alerts.filter((a) => a.vaultId === pos.vaultId);
     const recommendation = buildRecommendation(
       pos.vaultId,
@@ -80,33 +166,37 @@ export async function buildHealthResponse(
     let walletPosition: WalletPositionState;
 
     if (read.source === "live_wallet_read") {
+      const claimNote =
+        read.claimableFormatted > 0
+          ? ` (+${read.claimableFormatted.toFixed(6)} in Mellow claim queue)`
+          : "";
       walletPosition = {
         source: "live_wallet_read",
         deposited: read.deposited,
-        shares: read.sharesFormatted,
-        note: `Live on-chain read at ${read.fetchedAt}. Shares: ${read.sharesFormatted.toFixed(6)}, Assets: ${read.deposited.toFixed(6)}.`,
+        shares: read.totalSharesFormatted,
+        note:
+          `Live read at ${read.fetchedAt}. ` +
+          `Liquid shares: ${read.sharesFormatted.toFixed(6)}${claimNote}. ` +
+          `Total underlying: ${read.deposited.toFixed(6)} ${pos.asset}.`,
       };
     } else {
       walletPosition = {
         source: "unavailable",
         deposited: null,
         shares: null,
-        note: `Live wallet read failed: ${read.reason}. Wire ETH_RPC_URL env var or check the contract address.`,
+        note: `Live wallet read failed: ${read.reason}. Set ETH_RPC_URL env var or check the contract address.`,
       };
     }
 
-    // Determine the effective dataMode for this position:
-    // If the wallet read succeeded, update the position's source field for alerting context.
-    const effectivePos: VaultPosition =
-      read.source === "live_wallet_read"
-        ? {
-            ...pos,
-            walletPositionSource: "live_wallet_read",
-            deposited: read.deposited,
-            shares: read.sharesFormatted,
-          }
-        : pos;
-    void effectivePos; // reserved for future alert-engine pass with live data
+    const vaultFreshness: SourceFreshness = {
+      source: livePositionMeta
+        ? livePositionMeta.vaultSources.get(pos.vaultId)?.tvl === "live"
+          ? "live"
+          : "unavailable"
+        : "seeded_demo",
+      asOf: new Date().toISOString(),
+      note: livePositionMeta ? "TVL and health from on-chain; APY from DeFiLlama; strategy weights seeded." : undefined,
+    };
 
     return {
       vaultId: pos.vaultId,
@@ -114,27 +204,28 @@ export async function buildHealthResponse(
       contractAddress: pos.contractAddress,
       health: pos.health,
       currentAPY: pos.currentAPY,
+      currentTVL: pos.tvl > 0 ? pos.tvl : null,
+      tvlCapUSD: pos.tvlCapUSD ?? null,
       walletPosition,
       benchmark: bm,
       allocation: alloc,
       recommendation,
       activeAlertCount: posAlerts.length,
       criticalAlertCount: posAlerts.filter((a) => a.severity === "critical").length,
-      freshness: VAULT_DATA_FRESHNESS,
+      freshness: vaultFreshness,
     };
   });
 
-  // dataMode stays "seeded_demo" because vault-level data (APY, TVL, health,
-  // strategies) is still seeded. Individual walletPosition.source and each
-  // vault's benchmark.freshness.source show per-field live/seeded status.
   const benchmarkSources = new Map<string, string>();
-  benchmarks.forEach((bm, vaultId) => benchmarkSources.set(vaultId, bm.freshness.source));
+  benchmarks.forEach((bm, vaultId) =>
+    benchmarkSources.set(vaultId, bm.freshness.source)
+  );
 
   return {
     wallet,
     generatedAt: new Date().toISOString(),
-    dataMode: "seeded_demo" as const,
-    note: buildNote(benchmarkSources),
+    dataMode: resolveDataMode(livePositionMeta),
+    note: buildNote(livePositionMeta, benchmarkSources),
     vaults,
   };
 }

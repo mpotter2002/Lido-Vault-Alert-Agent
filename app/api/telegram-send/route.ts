@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { MOCK_POSITIONS, DEMO_WALLET } from "@/lib/mock-data";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
@@ -7,63 +6,50 @@ import {
   getTelegramDeliveryConfig,
   deliveryConfigSummary,
 } from "@/lib/delivery-config";
+import { buildLivePositions } from "@/lib/live-positions";
+
+const MONITORED_WALLET =
+  process.env.MONITORED_WALLET ?? "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
 
 /**
  * POST /api/telegram-send
  *
- * Builds the current vault alert digest and delivers it to a Telegram chat
- * via the Telegram Bot API.
+ * Builds a live vault alert digest and delivers it to Telegram.
+ * Vault state (APY, TVL, health) is read live before composing the message.
  *
  * Required env vars (unless dryRun=true):
  *   TELEGRAM_BOT_TOKEN  — Bot token from @BotFather
- *   TELEGRAM_CHAT_ID    — Chat ID to send to (your user ID for DM testing,
- *                         a group/channel ID for bot mode)
+ *   TELEGRAM_CHAT_ID    — Chat ID (your user ID for DM, group/channel ID for bot mode)
  *
- * Optional env var:
+ * Optional env vars:
  *   TELEGRAM_CHANNEL_TYPE — "telegram_dm" (default) | "telegram_bot"
- *                           Set to "telegram_bot" when using a dedicated public bot.
+ *   MONITORED_WALLET      — Ethereum address to read vault position for
+ *   ETH_RPC_URL           — Ethereum JSON-RPC endpoint (default: cloudflare-eth.com)
  *
  * Optional JSON body:
  *   {
- *     "dryRun": true,        // Compose + return message without sending (default: false)
- *     "silent": true|false   // Override notification sound. Default: silent for
- *                            // non-critical digests, audible for critical alerts.
+ *     "dryRun": true,          // Compose + return message without sending (default: false)
+ *     "silent": true|false,    // Override notification sound
+ *     "wallet": "0x..."        // Override monitored wallet
  *   }
- *
- * Response:
- *   {
- *     sent: boolean,
- *     dryRun: boolean,
- *     wallet: string,
- *     deliveryConfig: { channelType, ready, chatId, note, nextStep },
- *     alertMeta: { alertCount, criticalCount, warningCount, infoCount,
- *                  actionRequiredCount, hasActionRequired, isCritical },
- *     message: string,          // MarkdownV2 text
- *     sendPayload: object,      // Exact body POSTed to Telegram (minus chat_id)
- *     telegramResponse?: object // Raw Telegram API response when sent=true
- *     error?: string            // If delivery failed
- *     errorType?: string        // "config_missing"|"auth"|"chat_not_found"|"network"|"unknown"
- *   }
- *
- * Usage:
- *   curl -X POST http://localhost:3000/api/telegram-send
- *   curl -X POST http://localhost:3000/api/telegram-send \
- *        -d '{"dryRun":true}' -H 'Content-Type: application/json'
  */
 export async function POST(request: Request) {
   let dryRun = false;
   let silentOverride: boolean | undefined = undefined;
+  let walletOverride: string | undefined = undefined;
 
   try {
     const body = await request.json().catch(() => ({}));
     dryRun = body?.dryRun === true;
-    if (typeof body?.silent === "boolean") {
-      silentOverride = body.silent;
+    if (typeof body?.silent === "boolean") silentOverride = body.silent;
+    if (typeof body?.wallet === "string" && body.wallet.startsWith("0x")) {
+      walletOverride = body.wallet;
     }
   } catch {
-    // ignore body parse errors
+    // ignore parse errors
   }
 
+  const wallet = walletOverride ?? MONITORED_WALLET;
   const config = getTelegramDeliveryConfig();
   const configSummary = deliveryConfigSummary(config);
 
@@ -82,17 +68,20 @@ export async function POST(request: Request) {
     );
   }
 
-  // Build alert content
-  const { alerts } = await generateEnrichedAlerts(MOCK_POSITIONS);
-  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  // Build live alert content
+  const { positions } = await buildLivePositions();
+  const [{ alerts }, health] = await Promise.all([
+    generateEnrichedAlerts(positions),
+    buildHealthResponse(wallet),
+  ]);
+
   const payload = composeTelegramMessage(
-    DEMO_WALLET,
+    wallet,
     alerts,
     health.vaults,
     silentOverride !== undefined ? { silent: silentOverride } : {}
   );
 
-  // The body POSTed to Telegram (chat_id added below on live send)
   const sendPayload = {
     text: payload.text,
     parse_mode: payload.parse_mode,
@@ -104,12 +93,13 @@ export async function POST(request: Request) {
     return NextResponse.json({
       sent: false,
       dryRun: true,
-      wallet: DEMO_WALLET,
+      wallet,
+      dataMode: health.dataMode,
       deliveryConfig: configSummary,
       alertMeta: payload.meta,
       message: payload.text,
       sendPayload,
-      note: "dryRun=true — message composed but not sent. Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and POST without dryRun to deliver.",
+      note: "dryRun=true — message composed from live data but not sent. Remove dryRun or set to false to deliver.",
     });
   }
 
@@ -157,7 +147,8 @@ export async function POST(request: Request) {
   return NextResponse.json({
     sent: !sendError,
     dryRun: false,
-    wallet: DEMO_WALLET,
+    wallet,
+    dataMode: health.dataMode,
     deliveryConfig: configSummary,
     alertMeta: payload.meta,
     message: payload.text,

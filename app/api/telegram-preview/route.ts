@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
-import { MOCK_POSITIONS, DEMO_WALLET } from "@/lib/mock-data";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
-import {
-  getTelegramDeliveryConfig,
-  deliveryConfigSummary,
-} from "@/lib/delivery-config";
+import { getTelegramDeliveryConfig, deliveryConfigSummary } from "@/lib/delivery-config";
+import { buildLivePositions } from "@/lib/live-positions";
+
+const MONITORED_WALLET =
+  process.env.MONITORED_WALLET ?? "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
 
 /**
  * GET /api/telegram-preview
  *
- * Returns a fully composed Telegram alert digest without sending it.
- * Useful for inspecting message output and testing bot integration before
- * wiring a live bot token.
+ * Returns a fully composed Telegram alert digest built from live vault data —
+ * without sending it. Useful for inspecting message output and testing bot
+ * integration before wiring a live bot token.
  *
  * The `sendPayload` field contains the exact JSON body ready to POST to
  * the Telegram Bot API sendMessage endpoint — add `chat_id` and you're done:
@@ -21,30 +21,24 @@ import {
  *   POST https://api.telegram.org/bot<TOKEN>/sendMessage
  *   { "chat_id": "<YOUR_CHAT_ID>", ...sendPayload }
  *
- * Response:
- *   {
- *     wallet: string,
- *     generatedAt: string,
- *     dataMode: string,
- *     deliveryConfig: { channelType, ready, missing?, chatId, note, nextStep },
- *     alertMeta: { alertCount, criticalCount, warningCount, infoCount,
- *                  actionRequiredCount, hasActionRequired, isCritical },
- *     message: string,      // MarkdownV2-formatted text
- *     sendPayload: {        // Drop into Telegram sendMessage body (add chat_id)
- *       text, parse_mode, disable_web_page_preview, disable_notification
- *     },
- *     note: string
- *   }
+ * Query params:
+ *   wallet=0x...  — override monitored wallet (default: MONITORED_WALLET env var)
  */
-export async function GET() {
-  const { alerts } = await generateEnrichedAlerts(MOCK_POSITIONS);
-  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
-  const config = getTelegramDeliveryConfig();
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const wallet = searchParams.get("wallet") ?? MONITORED_WALLET;
 
-  const payload = composeTelegramMessage(DEMO_WALLET, alerts, health.vaults);
+  const { positions } = await buildLivePositions();
+  const [{ alerts }, health, config] = await Promise.all([
+    generateEnrichedAlerts(positions),
+    buildHealthResponse(wallet),
+    Promise.resolve(getTelegramDeliveryConfig()),
+  ]);
+
+  const payload = composeTelegramMessage(wallet, alerts, health.vaults);
 
   return NextResponse.json({
-    wallet: DEMO_WALLET,
+    wallet,
     generatedAt: health.generatedAt,
     dataMode: health.dataMode,
     deliveryConfig: deliveryConfigSummary(config),
@@ -59,6 +53,6 @@ export async function GET() {
     note:
       "Add chat_id to sendPayload and POST to https://api.telegram.org/bot<TOKEN>/sendMessage. " +
       "Use POST /api/telegram-send to deliver from the server. " +
-      "This is seeded demo data — not a live on-chain read.",
+      `Data mode: ${health.dataMode}. ${health.note}`,
   });
 }

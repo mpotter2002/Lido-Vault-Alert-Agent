@@ -103,6 +103,8 @@ export interface VaultHealthSummary {
   contractAddress: string;
   health: VaultHealth;
   currentAPY: number;
+  currentTVL: number | null;
+  tvlCapUSD: number | null;
   // walletPosition is separate from vault-level metrics.
   // When source = "unavailable" the agent has not yet wired a live wallet read.
   walletPosition: WalletPositionState;
