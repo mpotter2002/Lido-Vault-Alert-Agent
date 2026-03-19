@@ -1,6 +1,6 @@
 # Lido Vault Alert Agent — Tool Instructions
 
-You have access to the Lido Vault Alert Agent API at https://lido-vault-alert-agent.vercel.app
+You have access to the Lido Vault Alert Agent API at https://lidovaultagent.vercel.app
 
 Use these endpoints to answer questions about a user's Lido Earn vault positions (EarnETH and EarnUSD) on Ethereum mainnet. All endpoints return JSON.
 
@@ -34,7 +34,7 @@ Use these endpoints when the user asks about:
 Full vault health snapshot. Returns APY, TVL, wallet position, benchmark comparison, allocation breakdown, active alerts, and a plain-English recommendation.
 
 ```
-GET https://lido-vault-alert-agent.vercel.app/api/health?wallet=WALLET_ADDRESS
+GET https://lidovaultagent.vercel.app/api/health?wallet=WALLET_ADDRESS
 ```
 
 Query params:
@@ -57,7 +57,7 @@ Key response fields:
 All active alerts for EarnETH and EarnUSD. Returns severity, title, summary, and suggested action for each alert.
 
 ```
-GET https://lido-vault-alert-agent.vercel.app/api/alerts
+GET https://lidovaultagent.vercel.app/api/alerts
 ```
 
 Query params:
@@ -76,7 +76,7 @@ Key response fields:
 Answers: is this vault's APY currently above its benchmark floor?
 
 ```
-GET https://lido-vault-alert-agent.vercel.app/api/yield-floor?vault=earnETH&wallet=WALLET_ADDRESS
+GET https://lidovaultagent.vercel.app/api/yield-floor?vault=earnETH&wallet=WALLET_ADDRESS
 ```
 
 Query params:
