@@ -12,12 +12,15 @@ import {
 // Maps free-text strategy labels to canonical protocol names.
 // ---------------------------------------------------------------------------
 
+// Matches both original seeded labels and real Mellow subvault protocol labels.
+// EarnETH routes into strETH (EigenLayer/Symbiotic) + GGV (native ETH).
+// EarnUSD routes into earnUSDc which integrates Aave, Morpho, Balancer, Fluid.
 const PROTOCOL_KEYWORDS: Array<[ProtocolName, string[]]> = [
+  ["Aave", ["aave", "spark"]],
+  ["Morpho", ["morpho"]],
   ["Pendle", ["pendle", "pt-", "yt-"]],
   ["Gearbox", ["gearbox"]],
   ["Maple", ["maple"]],
-  ["Aave", ["aave"]],
-  ["Morpho", ["morpho"]],
 ];
 
 export function classifyProtocol(strategyLabel: string): ProtocolName {

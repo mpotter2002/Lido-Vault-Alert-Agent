@@ -38,3 +38,6 @@ next-env.d.ts
 # env files
 .env.local
 .env*.local
+
+# subscriber data — contains chat IDs, keep out of git
+/data/subscribers.json

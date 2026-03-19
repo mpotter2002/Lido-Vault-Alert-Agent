@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
-import { MOCK_POSITIONS, DEMO_WALLET } from "@/lib/mock-data";
 import { buildHealthResponse } from "@/lib/health-builder";
+
+const MONITORED_WALLET =
+  process.env.MONITORED_WALLET ?? "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
 
 /**
  * GET /api/yield-floor
  *
- * MCP-callable yield-floor check.
- * Answers: "Is this vault's APY above its benchmark floor?"
+ * MCP-callable yield-floor check using live vault data.
+ * Answers: "Is this vault's APY above its benchmark floor right now?"
  *
  * Query params:
  *   vault=earnETH|earnUSD  — required; which vault to check
  *   threshold_bps=<int>    — optional override floor in bps (e.g. -100)
+ *   wallet=0x...           — optional wallet override
  *
  * Response:
  *   {
@@ -19,15 +22,12 @@ import { buildHealthResponse } from "@/lib/health-builder";
  *     recommendation: { action, headline, rationale },
  *     dataMode, freshness
  *   }
- *
- * Example:
- *   GET /api/yield-floor?vault=earnETH
- *   GET /api/yield-floor?vault=earnUSD&threshold_bps=-50
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const vaultFilter = searchParams.get("vault");
   const thresholdBpsParam = searchParams.get("threshold_bps");
+  const wallet = searchParams.get("wallet") ?? MONITORED_WALLET;
 
   if (!vaultFilter) {
     return NextResponse.json(
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const health = await buildHealthResponse(DEMO_WALLET, MOCK_POSITIONS);
+  const health = await buildHealthResponse(wallet);
   const vaultSummary = health.vaults.find((v) => v.vaultId === vaultFilter);
 
   if (!vaultSummary) {
@@ -47,16 +47,13 @@ export async function GET(request: Request) {
   }
 
   const bm = vaultSummary.benchmark;
-  // Allow caller to override the floor threshold
-  const effectiveFloorBps =
-    threshold_bps_valid(thresholdBpsParam)
-      ? parseInt(thresholdBpsParam!, 10)
-      : bm.floorBps;
-
+  const effectiveFloorBps = thresholdBpsValid(thresholdBpsParam)
+    ? parseInt(thresholdBpsParam!, 10)
+    : bm.floorBps;
   const belowFloor = bm.spreadBps < effectiveFloorBps;
 
   return NextResponse.json({
-    wallet: DEMO_WALLET,
+    wallet,
     generatedAt: health.generatedAt,
     dataMode: health.dataMode,
     vault: vaultSummary.vaultName,
@@ -73,7 +70,7 @@ export async function GET(request: Request) {
   });
 }
 
-function threshold_bps_valid(v: string | null): boolean {
+function thresholdBpsValid(v: string | null): boolean {
   if (!v) return false;
   const n = parseInt(v, 10);
   return !isNaN(n);

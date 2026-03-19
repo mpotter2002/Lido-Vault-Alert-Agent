@@ -1,32 +1,32 @@
 import { NextResponse } from "next/server";
-import { MOCK_POSITIONS, DEMO_WALLET } from "@/lib/mock-data";
+import { buildLivePositions } from "@/lib/live-positions";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
+
+const MONITORED_WALLET =
+  process.env.MONITORED_WALLET ?? "0x8f7fD8947DE49C3FFCd4B25C03249B6D997f6112";
 
 /**
  * GET /api/alerts
  *
- * Returns the enriched alert set for the demo position set.
- * Alerts now include benchmark-relative alerts (yield vs stETH / Aave USDC)
- * and allocation-shift alerts (Aave, Morpho, Pendle, Gearbox, Maple).
- *
- * Each alert carries a `type` field to distinguish alert classes:
- *   position-state: apy_drop, apy_recovery, withdrawal_delay, deposit_queued,
- *                   tvl_cap_approaching, vault_pause, vault_unhealthy, curator_rebalance
- *   benchmark:      benchmark_underperformance, benchmark_recovery
- *   allocation:     allocation_shift
+ * Returns the enriched alert set from live vault data.
+ * Vault state (APY, TVL, health) is read live; benchmarks fetched from
+ * Lido staking-stats API and DeFiLlama.
  *
  * Query params:
  *   severity=critical|warning|info  — filter by severity
  *   vault=earnETH|earnUSD           — filter by vault
  *   type=<AlertType>                — filter by alert type
+ *   wallet=0x...                    — wallet to include in context
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const severityFilter = searchParams.get("severity");
   const vaultFilter = searchParams.get("vault");
   const typeFilter = searchParams.get("type");
+  const wallet = searchParams.get("wallet") ?? MONITORED_WALLET;
 
-  const { alerts, benchmarks } = await generateEnrichedAlerts(MOCK_POSITIONS);
+  const { positions, meta } = await buildLivePositions();
+  const { alerts, benchmarks } = await generateEnrichedAlerts(positions);
 
   const filtered = alerts.filter((a) => {
     if (severityFilter && a.severity !== severityFilter) return false;
@@ -35,11 +35,6 @@ export async function GET(request: Request) {
     return true;
   });
 
-  // Attach benchmark freshness info to the response envelope.
-  // freshness.source = "live"                  — fetched from Lido/DeFiLlama this request
-  // freshness.source = "cached_last_known_good" — live fetch failed; using last real cached value (stale)
-  // freshness.source = "unavailable"            — live fetch failed and no cache; comparison suppressed
-  // freshness.source = "seeded_demo"            — explicit demo mode only (not a production fallback)
   const benchmarkMeta: Record<string, object> = {};
   benchmarks.forEach((bm, vaultId) => {
     benchmarkMeta[vaultId] = {
@@ -56,7 +51,6 @@ export async function GET(request: Request) {
     };
   });
 
-  // Agent-friendly summary — quick scan without iterating the full alert list
   const allCritical = alerts.filter((a) => a.severity === "critical");
   const allWarnings = alerts.filter((a) => a.severity === "warning");
   const allActionRequired = alerts.filter((a) => a.actionRequired);
@@ -81,16 +75,17 @@ export async function GET(request: Request) {
       : null,
   };
 
+  // Data source summary
+  const vaultDataSources: Record<string, object> = {};
+  meta.vaultSources.forEach(({ tvl, apy }, vaultId) => {
+    vaultDataSources[vaultId] = { tvlSource: tvl, apySource: apy };
+  });
+
   return NextResponse.json({
-    wallet: DEMO_WALLET,
+    wallet,
     generatedAt: new Date().toISOString(),
-    dataMode: "seeded_demo",
-    note:
-      "Vault state (APY, TVL, health, strategies) is seeded demo data. " +
-      "Benchmark APYs are attempted live (Lido staking-stats API / DeFiLlama yields API). " +
-      "On failure: last-known-good cached real value (cached_last_known_good) → unavailable. " +
-      "seeded_demo values are never used as a silent fallback. " +
-      "See benchmarks[vaultId].freshness.source for the actual outcome per vault.",
+    dataMode: "partial_live",
+    vaultDataSources,
     agentSummary,
     benchmarks: benchmarkMeta,
     alertCount: filtered.length,
