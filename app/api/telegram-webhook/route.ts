@@ -73,11 +73,13 @@ async function buildMergedHealth(wallets: string[]): Promise<VaultHealthSummary[
     for (let i = 1; i < allHealthResponses.length; i++) {
       const match = allHealthResponses[i].vaults.find((s) => s.vaultId === baseSummary.vaultId);
       if (match?.walletPosition.source === "live_wallet_read") {
-        // Sum deposited amounts, preserving null only if ALL wallets have null
-        if (match.walletPosition.deposited !== null) {
+        // Only add positive values — a 0 from a wallet with no position must not
+        // corrupt a null deposited from another wallet (null = has shares but
+        // convertToAssets is unavailable, which is different from "no position").
+        if (match.walletPosition.deposited !== null && match.walletPosition.deposited > 0) {
           totalDeposited = (totalDeposited ?? 0) + match.walletPosition.deposited;
         }
-        if (match.walletPosition.shares !== null) {
+        if (match.walletPosition.shares !== null && match.walletPosition.shares > 0) {
           totalShares = (totalShares ?? 0) + match.walletPosition.shares;
         }
         anyLiveRead = true;
