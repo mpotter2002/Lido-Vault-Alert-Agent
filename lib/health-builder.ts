@@ -55,7 +55,7 @@ function buildNote(
       parts.push(`Allocation weights unavailable: ${allocUnavail.join(", ")}`);
   }
   parts.push(
-    "Wallet position (deposited, shares) is read live — liquid balanceOf + Mellow claimableSharesOf."
+    "Wallet position (deposited, shares) is read live — shareManager.balanceOf (post-claim ERC-20) + vault.claimableSharesOf (pre-claim queue)."
   );
 
   benchmarkSources.forEach((source, vaultId) => {
