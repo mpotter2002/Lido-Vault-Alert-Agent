@@ -200,7 +200,8 @@ export async function POST(request: Request) {
         `Your alert level: ${current}\n\n` +
           `/alerts critical — serious issues only\n` +
           `  • Vault paused\n` +
-          `  • Vault health degraded\n\n` +
+          `  • Vault health degraded\n` +
+          `  • APY drops below your personal floor (always on)\n\n` +
           `/alerts all — all warnings and updates\n` +
           `  • Everything in critical, plus:\n` +
           `  • APY drops more than 0.5% in 24h\n` +
