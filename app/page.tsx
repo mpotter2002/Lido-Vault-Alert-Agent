@@ -249,9 +249,9 @@ export default function Home() {
               Works with any agent
             </div>
             <div style={{ fontSize: 12, color: c.text2, lineHeight: 1.55, marginBottom: 14 }}>
-              Copy this prompt and paste it into Claude, ChatGPT, OpenClaw, Hermes, or any agent. It will read the instructions, then walk you through setup and ask for your wallet address.
+              Run this in your agent to get started. It will fetch the setup instructions and walk you through connecting your wallet.
             </div>
-            <CopyBlock cmd={`Read ${BASE_URL}/agent-instructions.md and set me up as a new user — ask for my wallet address and get me started monitoring my Lido Earn vaults.`} />
+            <CopyBlock cmd={`curl -s ${BASE_URL}/agent-instructions.md`} />
           </div>
 
           {/* Bot nudge — below agent card */}
