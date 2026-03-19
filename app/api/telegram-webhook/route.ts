@@ -199,7 +199,16 @@ export async function POST(request: Request) {
         chatId,
         `Your alert level: ${current}\n\n` +
           `/alerts critical — serious issues only\n` +
-          `/alerts all — all warnings and updates`
+          `  • Vault paused\n` +
+          `  • Vault health degraded\n\n` +
+          `/alerts all — all warnings and updates\n` +
+          `  • Everything in critical, plus:\n` +
+          `  • APY drop >15% in 24h\n` +
+          `  • Yield trailing stETH / Aave benchmark\n` +
+          `  • TVL cap approaching\n` +
+          `  • Protocol allocation shift\n` +
+          `  • Curator rebalance\n` +
+          `  • Withdrawal delays`
       );
     }
     return NextResponse.json({ ok: true });
