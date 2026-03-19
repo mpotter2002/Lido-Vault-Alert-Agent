@@ -1,28 +1,29 @@
 /**
  * lib/wallet-reader.ts
  *
- * Server-side wallet position reader for Mellow/ERC-4626 vaults.
+ * Server-side wallet position reader for Mellow flexible vaults.
  * Uses raw JSON-RPC eth_call — no external SDK required.
  *
  * Read strategy (in order):
- *   1. balanceOf(wallet)          → liquid vault shares (ERC-20)
- *   2. claimableSharesOf(wallet)  → Mellow queue: shares minted but not yet
- *                                   transferred (pending claim after deposit)
- *   3. convertToAssets(totalShares) → underlying asset value for the combined total
- *   4. decimals()                 → for human-readable formatting
+ *   1. vault.shareManager()         → address of the separate ERC-20 share token
+ *   2. shareManager.decimals()      → decimal places for formatting
+ *   3. shareManager.balanceOf(wallet) → liquid vault shares (ERC-20, post-claim)
+ *   4. vault.claimableSharesOf(wallet) → Mellow queue: shares minted but not yet
+ *                                        transferred (pending claim after deposit)
+ *   5. convertToAssets(totalShares) → underlying asset value (may revert on Mellow;
+ *                                     inner try/catch shows share count instead)
+ *
+ * Why shareManager matters:
+ *   Mellow flexible vaults separate the vault logic from the ERC-20 share token.
+ *   The vault contract's balanceOf() intentionally reverts. The share token lives
+ *   at the address returned by vault.shareManager(). After a user calls claim(),
+ *   their shares are held as ERC-20 tokens in the shareManager contract.
  *
  * Why claimableSharesOf matters:
- *   Mellow vaults use a queue-based deposit model. After a deposit is submitted
- *   and the curator processes it, shares are held in the vault's claim module
- *   before the depositor calls claim(). During this window, balanceOf() returns 0
- *   even though the depositor has a real position. claimableSharesOf() captures
- *   this pending-claim balance so we never show a false zero.
- *
- * Selector note:
- *   claimableSharesOf(address) — keccak256 selector 0x9b2b6823
- *   Verified against Mellow Protocol ShareModule interface.
- *   If this returns empty/reverts on a vault that doesn't implement ShareModule,
- *   it is safely caught and the liquid-only balanceOf result is used.
+ *   After a deposit is queued and the curator processes it, shares are held in
+ *   the vault's claim module before the depositor calls claim(). During this
+ *   window, shareManager.balanceOf() returns 0 even though the depositor has a
+ *   real position. claimableSharesOf() on the vault captures this pending balance.
  */
 
 import {
@@ -62,16 +63,15 @@ export type WalletReadResult = WalletReadSuccess | WalletReadUnavailable;
 // ABI selectors
 // ---------------------------------------------------------------------------
 
-// balanceOf(address) → 0x70a08231
+// shareManager() → 0x5c60173d  (Mellow IVaultModule: returns the ERC-20 share token address)
+const SEL_SHARE_MANAGER = "0x5c60173d";
+// balanceOf(address) → 0x70a08231  (called on shareManager, not the vault)
 const SEL_BALANCE_OF = "0x70a08231";
-// convertToAssets(uint256) → 0x07a2d13a
-const SEL_CONVERT_TO_ASSETS = "0x07a2d13a";
-// decimals() → 0x313ce567
+// decimals() → 0x313ce567  (called on shareManager)
 const SEL_DECIMALS = "0x313ce567";
-// claimableSharesOf(address) → 0x1c14724f
-// Verified via 4byte.directory (keccak256("claimableSharesOf(address)")).
-// Mellow IShareModule: returns shares held in queue awaiting claim().
-// Safe to call — returns 0 or reverts on non-ShareModule vaults.
+// convertToAssets(uint256) → 0x07a2d13a  (may revert; inner try/catch)
+const SEL_CONVERT_TO_ASSETS = "0x07a2d13a";
+// claimableSharesOf(address) → 0x1c14724f  (called on vault; Mellow queue shares pre-claim)
 const SEL_CLAIMABLE_SHARES_OF = "0x1c14724f";
 
 // ---------------------------------------------------------------------------
@@ -95,17 +95,23 @@ export async function readWalletPosition(
   const fetchedAt = new Date().toISOString();
 
   try {
-    // 1. decimals() — needed for formatting
-    const decResult = await ethCall(contractAddress, SEL_DECIMALS, rpcUrl);
+    // 1. shareManager() → the separate ERC-20 share token contract
+    //    Mellow flexible vaults delegate ERC-20 accounting to a separate shareManager.
+    //    balanceOf / decimals must be called on the shareManager, not the vault itself.
+    const smResult = await ethCall(contractAddress, SEL_SHARE_MANAGER, rpcUrl);
+    const shareManagerAddress = "0x" + smResult.slice(-40);
+
+    // 2. decimals() on shareManager — needed for formatting
+    const decResult = await ethCall(shareManagerAddress, SEL_DECIMALS, rpcUrl);
     const decimals = Number(decodeUint256(decResult));
     const safeDecimals = decimals > 0 && decimals <= 30 ? decimals : 18;
 
-    // 2. balanceOf(wallet) → liquid shares
+    // 3. balanceOf(wallet) on shareManager → liquid shares (ERC-20, post-claim)
     const balData = SEL_BALANCE_OF + encodeAddress(wallet);
-    const balResult = await ethCall(contractAddress, balData, rpcUrl);
+    const balResult = await ethCall(shareManagerAddress, balData, rpcUrl);
     const shares = decodeUint256(balResult);
 
-    // 3. claimableSharesOf(wallet) → Mellow queue shares (may revert on non-queue vaults)
+    // 4. claimableSharesOf(wallet) on vault → Mellow queue shares (may revert on non-queue vaults)
     let claimableShares = BigInt(0);
     try {
       const claimData = SEL_CLAIMABLE_SHARES_OF + encodeAddress(wallet);
@@ -117,7 +123,7 @@ export async function readWalletPosition(
 
     const totalShares = shares + claimableShares;
 
-    // 4. convertToAssets(totalShares) — if any shares exist; else 0 assets.
+    // 5. convertToAssets(totalShares) — if any shares exist; else 0 assets.
     // Mellow flexible-vault deployments may revert this call (same oracle-context
     // requirement as totalSupply()). Wrapped in its own try/catch so a revert here
     // does not fail the entire position read — callers see deposited=null and
