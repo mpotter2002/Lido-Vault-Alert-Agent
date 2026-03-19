@@ -11,6 +11,7 @@
   "dependencies": {
     "@lidofinance/lido-ethereum-sdk": "^4.7.0",
     "@supabase/supabase-js": "^2.99.2",
+    "@vercel/analytics": "^2.0.1",
     "next": "14.2.35",
     "nodemailer": "^8.0.3",
     "react": "^18",
