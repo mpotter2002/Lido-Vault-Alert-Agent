@@ -91,9 +91,12 @@ export function composeTelegramMessage(
     for (const vs of vaultSummaries) {
       const pos = vs.walletPosition;
       const apyStr = escapeMd(`${vs.currentAPY.toFixed(2)}% APY`);
-      if (pos.source === "live_wallet_read" && pos.deposited !== null) {
-        const amount = escapeMd(`${pos.deposited.toFixed(4)} ${vs.vaultId === "earnETH" ? "ETH" : "USDC"}`);
+      if (pos.source === "live_wallet_read" && pos.deposited !== null && pos.deposited > 0) {
+        const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
+        const amount = escapeMd(`${pos.deposited.toFixed(4)} ${asset}`);
         lines.push(`• *${escapeMd(vs.vaultName)}*: ${amount} \\(${apyStr}\\)`);
+      } else if (pos.source === "live_wallet_read" && (pos.deposited === null || pos.deposited === 0)) {
+        lines.push(`• *${escapeMd(vs.vaultName)}*: ⏳ deposit pending \\(${apyStr}\\)`);
       } else {
         lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);
       }
