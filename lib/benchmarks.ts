@@ -1,5 +1,6 @@
 import { VaultId } from "./types";
 import { BenchmarkSnapshot, SourceFreshness } from "./domain";
+import { fetchStEthAprFromChain } from "./lido-sdk-steth-apr";
 
 // ---------------------------------------------------------------------------
 // Benchmark reference metadata (floor thresholds only — no seeded APY fallback)
@@ -261,7 +262,27 @@ export async function fetchBenchmark(
     });
   }
 
-  // Live fetch failed — try last-known-good cache before declaring unavailable.
+  // For earnETH: REST API failed — try the Lido SDK on-chain fallback.
+  // LidoSDKApr.getLastApr() reads the most recent stETH TokenRebased event from
+  // Ethereum mainnet and computes APR from the pre/post share rate. This is the
+  // same underlying data Lido's API serves, but fetched directly from chain.
+  // Note: returns the last-rebase APR (not a 7-day SMA) — slightly noisier but
+  // authoritative and independent of Lido's API infrastructure.
+  if (vaultId === "earnETH") {
+    const sdkResult = await fetchStEthAprFromChain();
+    if (sdkResult !== null) {
+      _lkgCache.set(vaultId, { apy: sdkResult.apr, asOf: sdkResult.asOf });
+      return buildSnapshot(vaultId, vaultAPY, sdkResult.apr, {
+        source: "live",
+        asOf: sdkResult.asOf,
+        note:
+          "Live stETH APR from on-chain TokenRebased event via Lido Ethereum SDK " +
+          "(Lido staking-stats REST API was unavailable; last-rebase APR used instead of 7-day SMA).",
+      });
+    }
+  }
+
+  // Live fetch failed (all sources) — try last-known-good cache before declaring unavailable.
   const cached = _lkgCache.get(vaultId);
   if (cached) {
     return buildSnapshot(vaultId, vaultAPY, cached.apy, {
@@ -269,7 +290,7 @@ export async function fetchBenchmark(
       asOf: cached.asOf,
       note:
         vaultId === "earnETH"
-          ? `Stale cached value from last successful Lido API fetch (${cached.asOf}). Live fetch failed or timed out.`
+          ? `Stale cached value from last successful fetch (Lido API or on-chain SDK) at ${cached.asOf}. All live sources failed.`
           : `Stale cached value from last successful DeFiLlama API fetch (${cached.asOf}). Live fetch failed or timed out.`,
     });
   }
