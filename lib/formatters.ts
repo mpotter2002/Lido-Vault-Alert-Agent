@@ -99,8 +99,6 @@ export function composeTelegramMessage(
         // Has vault shares but convertToAssets is unavailable on this vault — show share count
         const shareStr = escapeMd(`${pos.shares.toFixed(6)} shares`);
         lines.push(`• *${escapeMd(vs.vaultName)}*: ${shareStr} \\(${apyStr}\\)`);
-      } else if (pos.source === "live_wallet_read" && pos.shares !== null && pos.shares === 0) {
-        lines.push(`• *${escapeMd(vs.vaultName)}*: ⏳ deposit pending \\(${apyStr}\\)`);
       } else {
         lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);
       }
