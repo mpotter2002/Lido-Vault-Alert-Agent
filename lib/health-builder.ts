@@ -97,16 +97,24 @@ function resolveDataMode(
 }
 
 // ---------------------------------------------------------------------------
-// Freshness tag for allocation snapshots
+// Freshness tag for allocation snapshots — computed per-vault at runtime
 // ---------------------------------------------------------------------------
 
-const ALLOCATION_FRESHNESS: SourceFreshness = {
-  source: "seeded_demo",
-  asOf: new Date().toISOString(),
-  note:
-    "Strategy weights are seeded — Mellow subvault allocation enumeration is not yet wired. " +
-    "Tracked as a follow-up; all other vault metrics are live.",
-};
+function allocationFreshness(pos: VaultPosition): SourceFreshness {
+  const hasLiveWeights = pos.strategyWeights.some((w) => w.currentWeight > 0);
+  if (hasLiveWeights) {
+    return {
+      source: "live",
+      asOf: new Date().toISOString(),
+      note: "Allocation weights read live from on-chain RiskManager subvaultState().",
+    };
+  }
+  return {
+    source: "unavailable",
+    asOf: new Date().toISOString(),
+    note: "Allocation weights unavailable — RiskManager returned zero balances for all subvaults.",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Core builder — used by /api/health and the Telegram delivery path
@@ -117,7 +125,7 @@ const ALLOCATION_FRESHNESS: SourceFreshness = {
  *
  * Vault-level fields (TVL, APY, health) are fetched live.
  * Wallet position (deposited, shares) is read live via balanceOf + claimableSharesOf.
- * Strategy weights remain seeded (labeled clearly in the response note).
+ * Strategy weights are read live from on-chain RiskManager subvaultState() calls.
  *
  * If ANY live read fails, that field falls back gracefully and is labeled in the note.
  */
@@ -150,8 +158,8 @@ export async function buildHealthResponse(
     const bm = benchmarks.get(pos.vaultId)!;
     const alloc = allocationSnapshots.get(pos.vaultId)!;
 
-    // Stamp allocation freshness
-    alloc.freshness = ALLOCATION_FRESHNESS;
+    // Stamp allocation freshness based on whether live weights were read
+    alloc.freshness = allocationFreshness(pos);
 
     const posAlerts = alerts.filter((a) => a.vaultId === pos.vaultId);
     const recommendation = buildRecommendation(

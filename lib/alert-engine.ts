@@ -3,6 +3,7 @@ import { BenchmarkSnapshot, AllocationSnapshot } from "./domain";
 import { fetchBenchmark, getBenchmarkSnapshot } from "./benchmarks";
 import { buildAllocationSnapshot, describeShifts } from "./allocations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
+import { SourceFreshness } from "./domain";
 
 let idCounter = 0;
 function makeId() {
@@ -406,9 +407,17 @@ export async function generateEnrichedAlerts(positions: VaultPosition[]): Promis
   for (let i = 0; i < positions.length; i++) {
     const pos = positions[i];
     benchmarks.set(pos.vaultId, benchmarkResults[i]);
+    const hasLiveWeights = pos.strategyWeights.some((w) => w.currentWeight > 0);
+    const allocFreshness: SourceFreshness = hasLiveWeights
+      ? {
+          source: "live",
+          asOf: new Date().toISOString(),
+          note: "Allocation weights read live from on-chain RiskManager subvaultState().",
+        }
+      : SEEDED_FRESHNESS;
     allocationSnapshots.set(
       pos.vaultId,
-      buildAllocationSnapshot(pos.vaultId, pos.strategyWeights, SEEDED_FRESHNESS)
+      buildAllocationSnapshot(pos.vaultId, pos.strategyWeights, allocFreshness)
     );
   }
 
