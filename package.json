@@ -12,12 +12,14 @@
     "@lidofinance/lido-ethereum-sdk": "^4.7.0",
     "@supabase/supabase-js": "^2.99.2",
     "next": "14.2.35",
+    "nodemailer": "^8.0.3",
     "react": "^18",
     "react-dom": "^18",
     "viem": "^2.47.5"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "eslint": "^8",

@@ -1,7 +1,8 @@
 /**
  * POST /api/telegram-broadcast
  *
- * Sends personalized vault alerts to all subscribers.
+ * Sends personalized vault alerts to all subscribers via Telegram.
+ * Subscribers who have an email set also receive an email alert via Resend.
  * Each subscriber gets a message tailored to their wallet position.
  *
  * This is the route your scheduler (cron, Vercel cron, or external scheduler)
@@ -12,7 +13,7 @@
  *   { "onlyCritical": true } — only send if there are critical alerts
  *
  * Response:
- *   { sent, skipped, results: [{ chatId, wallet, sent, alertCount }] }
+ *   { sent, skipped, results: [{ chatId, wallet, sent, alertCount, email?, emailSent? }] }
  */
 
 import { NextResponse } from "next/server";
@@ -20,7 +21,8 @@ import { getSubscribers } from "@/lib/subscribers";
 import { buildLivePositions } from "@/lib/live-positions";
 import { buildHealthResponse } from "@/lib/health-builder";
 import { generateEnrichedAlerts } from "@/lib/alert-engine";
-import { composeTelegramMessage } from "@/lib/formatters";
+import { composeTelegramMessage, formatEmailAlert } from "@/lib/formatters";
+import { sendEmail } from "@/lib/email";
 
 export async function POST(request: Request) {
   let dryRun = false;
@@ -113,6 +115,7 @@ export async function POST(request: Request) {
       const payload = composeTelegramMessage(sub.wallet, relevantAlerts, health.vaults);
 
       if (dryRun) {
+        const { subject, body } = formatEmailAlert(sub.wallet, relevantAlerts, health.vaults);
         return {
           chatId: sub.chatId,
           wallet: sub.wallet,
@@ -120,6 +123,7 @@ export async function POST(request: Request) {
           dryRun: true,
           alertCount: alerts.length,
           message: payload.text,
+          ...(sub.email ? { email: sub.email, emailSubject: subject, emailBody: body } : {}),
         };
       }
 
@@ -139,11 +143,20 @@ export async function POST(request: Request) {
       );
 
       const telegramBody = await res.json().catch(() => ({}));
+
+      // Also send email if subscriber has one set
+      let emailResult: { ok: boolean; error?: string } | undefined;
+      if (sub.email) {
+        const { subject, body } = formatEmailAlert(sub.wallet, relevantAlerts, health.vaults);
+        emailResult = await sendEmail(sub.email, subject, body);
+      }
+
       return {
         chatId: sub.chatId,
         wallet: sub.wallet,
         sent: res.ok,
         alertCount: alerts.length,
+        ...(sub.email ? { email: sub.email, emailSent: emailResult?.ok, emailError: emailResult?.error } : {}),
         ...(res.ok ? {} : { error: (telegramBody as Record<string, unknown>)?.description }),
       };
     })

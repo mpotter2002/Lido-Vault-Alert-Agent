@@ -14,7 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 export type AlertLevel = "critical" | "all";
-export type OnboardingStep = "alertLevel" | "yieldFloor" | null;
+export type OnboardingStep = "alertLevel" | "yieldFloor" | "email" | null;
 
 export const DEFAULT_YIELD_FLOOR_PCT = 3;
 
@@ -27,6 +27,8 @@ export interface Subscriber {
   yieldFloorPct: number;
   /** Current onboarding step awaiting a reply, or null if complete. */
   pendingStep: OnboardingStep;
+  /** Optional email address for email notifications. */
+  email?: string;
 }
 
 function getClient() {
@@ -44,6 +46,7 @@ function toSubscriber(row: Record<string, unknown>): Subscriber {
     alertLevel: (row.alert_level as AlertLevel) ?? "all",
     yieldFloorPct: Number(row.yield_floor_pct ?? DEFAULT_YIELD_FLOOR_PCT),
     pendingStep: (row.pending_step as OnboardingStep) ?? null,
+    email: (row.email as string) ?? undefined,
   };
 }
 
@@ -86,12 +89,38 @@ export async function setAlertLevel(chatId: string, level: AlertLevel): Promise<
   }
 }
 
-/** Set the personal yield floor and complete onboarding. */
+/** Set the personal yield floor and complete onboarding (used by /setfloor command). */
 export async function setYieldFloor(chatId: string, pct: number): Promise<boolean> {
   try {
     const { error } = await getClient()
       .from("subscribers")
       .update({ yield_floor_pct: pct, pending_step: null })
+      .eq("chat_id", chatId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+/** Set yield floor during onboarding and advance to email step. */
+export async function setYieldFloorAndAdvance(chatId: string, pct: number): Promise<boolean> {
+  try {
+    const { error } = await getClient()
+      .from("subscribers")
+      .update({ yield_floor_pct: pct, pending_step: "email" })
+      .eq("chat_id", chatId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+/** Set email address and complete onboarding. Pass null to skip email. */
+export async function setEmail(chatId: string, email: string | null): Promise<boolean> {
+  try {
+    const { error } = await getClient()
+      .from("subscribers")
+      .update({ email, pending_step: null })
       .eq("chat_id", chatId);
     return !error;
   } catch {

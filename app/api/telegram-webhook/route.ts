@@ -3,15 +3,17 @@
  *
  * Supported commands:
  *   /start or /help     — welcome + command list
- *   /subscribe 0x...    — register wallet + onboarding (alert level → yield floor)
+ *   /subscribe 0x...    — register wallet + onboarding (alert level → yield floor → email)
  *   /unsubscribe        — stop receiving alerts
  *   /status             — live vault health snapshot
  *   /alerts [critical|all] — view or change alert sensitivity
  *   /setfloor [N]       — view or change personal yield floor (%)
+ *   /setemail [addr]    — view or change email for alert notifications
  *
- * Onboarding (two-step, triggered after /subscribe):
+ * Onboarding (three-step, triggered after /subscribe):
  *   Step 1 — user replies "1" or "2" to choose alert level
  *   Step 2 — user replies a number (e.g. "4") or "skip" to set yield floor
+ *   Step 3 — user replies an email address or "skip" to opt into email alerts
  */
 
 import { NextResponse } from "next/server";
@@ -21,6 +23,8 @@ import {
   getSubscribers,
   setAlertLevel,
   setYieldFloor,
+  setYieldFloorAndAdvance,
+  setEmail,
   clearPendingStep,
 } from "@/lib/subscribers";
 import { buildLivePositions } from "@/lib/live-positions";
@@ -50,10 +54,16 @@ const ALERT_LEVEL_QUESTION =
   `You can change this anytime with /alerts`;
 
 const yieldFloorQuestion = (current: number) =>
-  `Last one — what's your minimum acceptable APY?\n\n` +
+  `Almost there — what's your minimum acceptable APY?\n\n` +
   `I'll alert you if either vault drops below this threshold.\n\n` +
   `Reply with a number like 4 for 4%, or skip to keep the default (${current}%).\n\n` +
   `You can update this anytime with /setfloor`;
+
+const EMAIL_QUESTION =
+  `Last one — want email alerts too?\n\n` +
+  `Reply with your email address to get alert emails alongside Telegram messages.\n` +
+  `Or reply skip to use Telegram only.\n\n` +
+  `You can update this anytime with /setemail`;
 
 // ---------------------------------------------------------------------------
 // Webhook handler
@@ -99,25 +109,43 @@ export async function POST(request: Request) {
     // Step 2: yield floor
     if (sub.pendingStep === "yieldFloor") {
       if (text.toLowerCase() === "skip") {
-        await clearPendingStep(chatId);
-        await reply(
-          chatId,
-          `✅ Using default floor of ${sub.yieldFloorPct}%. You're all set!\n\n` +
-            `Type /status to see a live snapshot anytime.`
-        );
+        await setYieldFloorAndAdvance(chatId, sub.yieldFloorPct);
+        await reply(chatId, `✅ Using default floor of ${sub.yieldFloorPct}%.\n\n` + EMAIL_QUESTION);
       } else {
         const num = parseFloat(text.replace("%", ""));
         if (isNaN(num) || num < 0 || num > 30) {
           await reply(chatId, `Please enter a number between 0 and 30 (e.g. 4 for 4%), or skip.`);
         } else {
-          await setYieldFloor(chatId, Math.round(num * 10) / 10);
+          await setYieldFloorAndAdvance(chatId, Math.round(num * 10) / 10);
           await reply(
             chatId,
-            `✅ Yield floor set to ${Math.round(num * 10) / 10}%. You're all set!\n\n` +
-              `I'll alert you if EarnETH or EarnUSD APY drops below this.\n` +
-              `Type /status to see a live snapshot anytime.`
+            `✅ Yield floor set to ${Math.round(num * 10) / 10}%.\n\n` + EMAIL_QUESTION
           );
         }
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // Step 3: email
+    if (sub.pendingStep === "email") {
+      if (text.toLowerCase() === "skip") {
+        await setEmail(chatId, null);
+        await reply(
+          chatId,
+          `✅ Telegram only — got it. You're all set!\n\n` +
+            `Type /status to see a live snapshot anytime.\n` +
+            `To add email later: /setemail you@example.com`
+        );
+      } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+        await setEmail(chatId, text.toLowerCase());
+        await reply(
+          chatId,
+          `✅ Email set to ${text.toLowerCase()}. You're all set!\n\n` +
+            `You'll receive alerts on Telegram and by email.\n` +
+            `Type /status to see a live snapshot anytime.`
+        );
+      } else {
+        await reply(chatId, `That doesn't look like a valid email. Try again or reply skip.`);
       }
       return NextResponse.json({ ok: true });
     }
@@ -134,6 +162,7 @@ export async function POST(request: Request) {
         `/status — check current vault health\n` +
         `/alerts — view or change alert sensitivity\n` +
         `/setfloor — view or change your minimum APY threshold\n` +
+        `/setemail — view or change your email for alert notifications\n` +
         `/unsubscribe — stop receiving alerts\n` +
         `/help — show this message`
     );
@@ -238,6 +267,35 @@ export async function POST(request: Request) {
       const rounded = Math.round(num * 10) / 10;
       await setYieldFloor(chatId, rounded);
       await reply(chatId, `✅ Yield floor updated to ${rounded}%.`);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // ── /setemail [addr] ──────────────────────────────────────────────────────
+  if (text.startsWith("/setemail")) {
+    if (!sub) {
+      await reply(chatId, `You're not subscribed yet.\n\nType /subscribe 0xYourWallet to start.`);
+      return NextResponse.json({ ok: true });
+    }
+    const arg = text.split(/\s+/)[1]?.trim();
+    if (!arg) {
+      const current = sub.email ? `Email: ${sub.email}` : `No email set (Telegram only)`;
+      await reply(
+        chatId,
+        `${current}\n\n` +
+          `To add or change: /setemail you@example.com\n` +
+          `To remove: /setemail remove`
+      );
+      return NextResponse.json({ ok: true });
+    }
+    if (arg.toLowerCase() === "remove") {
+      await setEmail(chatId, null);
+      await reply(chatId, `✅ Email removed. You'll receive alerts on Telegram only.`);
+    } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(arg)) {
+      await setEmail(chatId, arg.toLowerCase());
+      await reply(chatId, `✅ Email set to ${arg.toLowerCase()}.`);
+    } else {
+      await reply(chatId, `That doesn't look like a valid email.\n\nUsage: /setemail you@example.com`);
     }
     return NextResponse.json({ ok: true });
   }
