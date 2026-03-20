@@ -469,6 +469,41 @@ export function generateEnrichedAlertsSync(positions: VaultPosition[]): {
 }
 
 // ---------------------------------------------------------------------------
+// Wallet-level alert: claimable shares awaiting user claim()
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate an info alert for each vault where the wallet has shares minted
+ * by the curator but not yet claimed (claimableSharesOf > 0).
+ *
+ * Called after wallet reads so it has access to WalletPositionState.
+ */
+export function claimableSharesAlerts(
+  perWalletVaults: { wallet: string; vaultId: string; vaultName: string; claimableShares: number }[]
+): Alert[] {
+  const alerts: Alert[] = [];
+  for (const { vaultId, vaultName, claimableShares } of perWalletVaults) {
+    if (claimableShares <= 0) continue;
+    const tokenLabel = vaultId === "earnETH" ? "EarnETH" : "EarnUSD";
+    alerts.push({
+      id: makeId(),
+      vaultId: vaultId as import("./types").VaultId,
+      vaultName,
+      type: "shares_pending_claim",
+      severity: "info",
+      title: `${claimableShares.toFixed(6)} ${tokenLabel} ready to claim`,
+      summary: `The curator has processed your deposit into ${vaultName}. Your ${claimableShares.toFixed(6)} ${tokenLabel} shares are minted and waiting — visit Lido Earn to call claim() and start tracking your position.`,
+      technicalDetail: `vault.claimableSharesOf(wallet) = ${claimableShares.toFixed(6)}. Shares are held in the vault's claim module until the depositor calls claim().`,
+      actionRequired: true,
+      suggestedAction: "Visit stake.lido.fi/earn to claim your shares.",
+      timestamp: new Date(),
+      dismissed: false,
+    });
+  }
+  return alerts;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

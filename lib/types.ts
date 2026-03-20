@@ -62,7 +62,8 @@ export type AlertType =
   | "vault_unhealthy"
   | "benchmark_underperformance"
   | "benchmark_recovery"
-  | "allocation_shift";
+  | "allocation_shift"
+  | "shares_pending_claim";
 
 export interface Alert {
   id: string;

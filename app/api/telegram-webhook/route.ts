@@ -35,7 +35,7 @@ import {
 } from "@/lib/subscribers";
 import { buildLivePositions } from "@/lib/live-positions";
 import { buildHealthResponse } from "@/lib/health-builder";
-import { generateEnrichedAlerts } from "@/lib/alert-engine";
+import { generateEnrichedAlerts, claimableSharesAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage } from "@/lib/formatters";
 import { VaultHealthSummary } from "@/lib/domain";
 
@@ -464,10 +464,22 @@ export async function POST(request: Request) {
     await reply(chatId, `⏳ Fetching live vault data...`);
     try {
       const { positions } = await buildLivePositions();
-      const [{ alerts }, perWalletHealth] = await Promise.all([
+      const [{ alerts: vaultAlerts }, perWalletHealth] = await Promise.all([
         generateEnrichedAlerts(positions),
         buildPerWalletHealth(sub.wallets),
       ]);
+      // Append per-wallet claimable alerts (shares minted but not yet claimed)
+      const claimable = claimableSharesAlerts(
+        perWalletHealth.flatMap(({ wallet: w, vaults }) =>
+          vaults.map((vs) => ({
+            wallet: w,
+            vaultId: vs.vaultId,
+            vaultName: vs.vaultName,
+            claimableShares: vs.walletPosition.claimableShares ?? 0,
+          }))
+        )
+      );
+      const alerts = [...vaultAlerts, ...claimable];
       const payload = composeTelegramMessage(
         sub.wallets,
         alerts,

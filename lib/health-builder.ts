@@ -1,6 +1,6 @@
 import { VaultPosition } from "./types";
 import { VaultHealthSummary, AgentHealthResponse, SourceFreshness, WalletPositionState, LiveVaultApySummary, LiveTvlState } from "./domain";
-import { generateEnrichedAlerts } from "./alert-engine";
+import { generateEnrichedAlerts, claimableSharesAlerts } from "./alert-engine";
 import { buildRecommendation } from "./recommendations";
 import { SEEDED_FRESHNESS } from "./benchmarks";
 import { readWalletPosition } from "./wallet-reader";
@@ -154,6 +154,20 @@ export async function buildHealthResponse(
     positions.map((pos) => readWalletPosition(wallet, pos.contractAddress))
   );
 
+  // Generate per-wallet claimable alerts now that we have wallet reads
+  const claimableAlertList = claimableSharesAlerts(
+    positions.map((pos, idx) => {
+      const r = walletReads[idx];
+      return {
+        wallet,
+        vaultId: pos.vaultId,
+        vaultName: pos.vaultName,
+        claimableShares: r.source === "live_wallet_read" ? r.claimableFormatted : 0,
+      };
+    })
+  );
+  const allAlerts = [...alerts, ...claimableAlertList];
+
   const vaults: VaultHealthSummary[] = positions.map((pos, idx) => {
     const bm = benchmarks.get(pos.vaultId)!;
     const alloc = allocationSnapshots.get(pos.vaultId)!;
@@ -161,7 +175,7 @@ export async function buildHealthResponse(
     // Stamp allocation freshness based on whether live weights were read
     alloc.freshness = allocationFreshness(pos);
 
-    const posAlerts = alerts.filter((a) => a.vaultId === pos.vaultId);
+    const posAlerts = allAlerts.filter((a) => a.vaultId === pos.vaultId);
     const recommendation = buildRecommendation(
       pos.vaultId,
       pos.health,
