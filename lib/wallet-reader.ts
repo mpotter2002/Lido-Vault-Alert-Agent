@@ -5,13 +5,17 @@
  * Uses raw JSON-RPC eth_call — no external SDK required.
  *
  * Read strategy (in order):
- *   1. vault.shareManager()         → address of the separate ERC-20 share token
- *   2. shareManager.decimals()      → decimal places for formatting
- *   3. shareManager.balanceOf(wallet) → liquid vault shares (ERC-20, post-claim)
+ *   1. vault.shareManager()            → address of the separate ERC-20 share token
+ *   2. shareManager.decimals()         → decimal places for formatting
+ *   3. shareManager.balanceOf(wallet)  → liquid vault shares (ERC-20, post-claim)
  *   4. vault.claimableSharesOf(wallet) → Mellow queue: shares minted but not yet
  *                                        transferred (pending claim after deposit)
- *   5. convertToAssets(totalShares) → underlying asset value (may revert on Mellow;
- *                                     inner try/catch shows share count instead)
+ *   5a. vault.pendingDepositsOf(wallet) → assets in raw deposit queue (pre-curator)
+ *       → falls back to depositModule().pendingDepositsOf(wallet) if vault reverts
+ *   5b. vault.pendingWithdrawalsOf(wallet) → shares in withdrawal queue (pre-curator)
+ *       → falls back to withdrawalModule().pendingWithdrawalsOf(wallet) if vault reverts
+ *   6. convertToAssets(totalShares)    → underlying asset value (may revert on Mellow;
+ *                                        inner try/catch shows share count instead)
  *
  * Why shareManager matters:
  *   Mellow flexible vaults separate the vault logic from the ERC-20 share token.
@@ -45,6 +49,16 @@ export interface WalletReadSuccess {
   totalShares: bigint;      // shares + claimableShares
   totalSharesFormatted: number;
   deposited: number | null; // underlying asset units (human-readable); null if convertToAssets unavailable
+  /**
+   * Assets deposited but not yet processed by the curator (raw deposit queue).
+   * In asset units (human-readable). 0 if not in queue or function unavailable.
+   */
+  pendingDepositAssets: number;
+  /**
+   * Shares submitted for withdrawal, awaiting curator processing.
+   * In share units (human-readable). 0 if not in queue or function unavailable.
+   */
+  pendingWithdrawalShares: number;
   decimals: number;
   fetchedAt: string;
 }
@@ -73,6 +87,14 @@ const SEL_DECIMALS = "0x313ce567";
 const SEL_CONVERT_TO_ASSETS = "0x07a2d13a";
 // claimableSharesOf(address) → 0x1c14724f  (called on vault; Mellow queue shares pre-claim)
 const SEL_CLAIMABLE_SHARES_OF = "0x1c14724f";
+// pendingDepositsOf(address) → 0x74f1a89d  (Mellow: assets deposited but not yet curator-processed)
+const SEL_PENDING_DEPOSITS_OF = "0x74f1a89d";
+// pendingWithdrawalsOf(address) → 0xa6500e11  (Mellow: shares in withdrawal queue)
+const SEL_PENDING_WITHDRAWALS_OF = "0xa6500e11";
+// depositModule() → 0x5aedb11d  (Mellow: address of the DepositModule contract)
+const SEL_DEPOSIT_MODULE = "0x5aedb11d";
+// withdrawalModule() → 0xef223816  (Mellow: address of the WithdrawalModule contract)
+const SEL_WITHDRAWAL_MODULE = "0xef223816";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -123,7 +145,52 @@ export async function readWalletPosition(
 
     const totalShares = shares + claimableShares;
 
-    // 5. convertToAssets(totalShares) — if any shares exist; else 0 assets.
+    // 5a. pendingDepositsOf(wallet) — assets deposited but not yet processed by the curator.
+    //     Try on vault directly first; if it reverts, try the DepositModule.
+    //     Returns asset units in 18-decimal fixed-point (matches share decimals).
+    let pendingDepositAssets = 0;
+    try {
+      const pdData = SEL_PENDING_DEPOSITS_OF + encodeAddress(wallet);
+      const pdResult = await ethCall(contractAddress, pdData, rpcUrl);
+      const pdRaw = decodeUint256(pdResult);
+      pendingDepositAssets = Number(pdRaw) / Math.pow(10, safeDecimals);
+    } catch {
+      // Function not on vault — try DepositModule
+      try {
+        const dmResult = await ethCall(contractAddress, SEL_DEPOSIT_MODULE, rpcUrl);
+        const depositModuleAddress = "0x" + dmResult.slice(-40);
+        const pdData = SEL_PENDING_DEPOSITS_OF + encodeAddress(wallet);
+        const pdResult = await ethCall(depositModuleAddress, pdData, rpcUrl);
+        const pdRaw = decodeUint256(pdResult);
+        pendingDepositAssets = Number(pdRaw) / Math.pow(10, safeDecimals);
+      } catch {
+        // Not available on this vault — safe to treat as 0
+      }
+    }
+
+    // 5b. pendingWithdrawalsOf(wallet) — shares submitted for withdrawal, awaiting curator.
+    //     Try on vault directly first; if it reverts, try the WithdrawalModule.
+    let pendingWithdrawalShares = 0;
+    try {
+      const pwData = SEL_PENDING_WITHDRAWALS_OF + encodeAddress(wallet);
+      const pwResult = await ethCall(contractAddress, pwData, rpcUrl);
+      const pwRaw = decodeUint256(pwResult);
+      pendingWithdrawalShares = Number(pwRaw) / Math.pow(10, safeDecimals);
+    } catch {
+      // Function not on vault — try WithdrawalModule
+      try {
+        const wmResult = await ethCall(contractAddress, SEL_WITHDRAWAL_MODULE, rpcUrl);
+        const withdrawalModuleAddress = "0x" + wmResult.slice(-40);
+        const pwData = SEL_PENDING_WITHDRAWALS_OF + encodeAddress(wallet);
+        const pwResult = await ethCall(withdrawalModuleAddress, pwData, rpcUrl);
+        const pwRaw = decodeUint256(pwResult);
+        pendingWithdrawalShares = Number(pwRaw) / Math.pow(10, safeDecimals);
+      } catch {
+        // Not available on this vault — safe to treat as 0
+      }
+    }
+
+    // 6. convertToAssets(totalShares) — if any shares exist; else 0 assets.
     // Mellow flexible-vault deployments may revert this call (same oracle-context
     // requirement as totalSupply()). Wrapped in its own try/catch so a revert here
     // does not fail the entire position read — callers see deposited=null and
@@ -156,6 +223,8 @@ export async function readWalletPosition(
       totalShares,
       totalSharesFormatted: Number(totalShares) / pow,
       deposited,
+      pendingDepositAssets,
+      pendingWithdrawalShares,
       decimals: safeDecimals,
       fetchedAt,
     };

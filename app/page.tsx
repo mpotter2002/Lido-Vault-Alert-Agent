@@ -315,7 +315,7 @@ export default function Home() {
           <span style={{ fontSize: 12, color: c.text3 }}>
             All endpoints return JSON · Live on-chain via Mellow RiskManager
           </span>
-          <a href="https://lido.fi/earn" target="_blank" rel="noopener noreferrer"
+          <a href="https://stake.lido.fi/earn" target="_blank" rel="noopener noreferrer"
             style={{ fontSize: 12, color: c.text3, textDecoration: "none" }}>
             Lido Earn ↗
           </a>

@@ -62,16 +62,42 @@ export interface TelegramMessagePayload {
 function renderVaultPosition(vs: VaultHealthSummary): string {
   const pos = vs.walletPosition;
   const apyStr = escapeMd(`${vs.currentAPY.toFixed(2)}% APY`);
-  if (pos.source === "live_wallet_read" && pos.deposited !== null && pos.deposited > 0) {
-    const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
-    const amount = escapeMd(`${pos.deposited.toFixed(4)} ${asset}`);
-    return `• *${escapeMd(vs.vaultName)}*: ${amount} \\(${apyStr}\\)`;
-  } else if (pos.source === "live_wallet_read" && pos.deposited === null && pos.shares !== null && pos.shares > 0) {
-    const shareStr = escapeMd(`${pos.shares.toFixed(6)} shares`);
-    return `• *${escapeMd(vs.vaultName)}*: ${shareStr} \\(${apyStr}\\)`;
-  } else {
-    return `• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`;
+  const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
+
+  if (pos.source === "live_wallet_read") {
+    const lines: string[] = [];
+    const liquidShares = pos.shares ?? 0;
+    const claimable = pos.claimableShares ?? 0;
+
+    // Active position — show ETH/USDC value if available, else share count
+    if (pos.deposited !== null && pos.deposited > 0) {
+      lines.push(`• *${escapeMd(vs.vaultName)}*: ${escapeMd(`${pos.deposited.toFixed(4)} ${asset}`)} \\(${apyStr}\\)`);
+    } else if (liquidShares > 0) {
+      lines.push(`• *${escapeMd(vs.vaultName)}*: ${escapeMd(`${liquidShares.toFixed(6)} shares`)} \\(${apyStr}\\)`);
+    } else if (claimable === 0 && (pos.pendingDepositAssets ?? 0) === 0 && (pos.pendingWithdrawalShares ?? 0) === 0) {
+      lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);
+    } else {
+      // Has only pending state — show vault name without a position amount
+      lines.push(`• *${escapeMd(vs.vaultName)}* \\(${apyStr}\\)`);
+    }
+
+    // Claimable shares: curator has processed the deposit, user hasn't called claim() yet
+    if (claimable > 0) {
+      lines.push(`  ⏳ ${escapeMd(`${claimable.toFixed(6)} shares pending claim`)}`);
+    }
+
+    // Pending deposit / withdrawal (awaiting curator — amount not shown, just state)
+    if ((pos.pendingDepositAssets ?? 0) > 0) {
+      lines.push(`  ⏳ deposit pending`);
+    }
+    if ((pos.pendingWithdrawalShares ?? 0) > 0) {
+      lines.push(`  ⏳ withdrawal pending`);
+    }
+
+    return lines.join("\n");
   }
+
+  return `• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`;
 }
 
 export function composeTelegramMessage(

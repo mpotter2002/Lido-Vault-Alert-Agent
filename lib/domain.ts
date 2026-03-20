@@ -89,7 +89,24 @@ export interface WalletPositionState {
   // "unavailable" = no wallet read has been wired; deposited and shares are null.
   source: "live_wallet_read" | "unavailable";
   deposited: number | null; // asset units; null when source = "unavailable"
-  shares: number | null;    // vault shares; null when source = "unavailable"
+  shares: number | null;    // liquid vault shares (post-claim ERC-20); null when source = "unavailable"
+  /**
+   * Shares minted by the curator and waiting for the user to call claim().
+   * This is the most common "pending" state: curator has processed the deposit
+   * but the user hasn't claimed their ERC-20 shares yet.
+   * null when source = "unavailable"; 0 when not in claim queue.
+   */
+  claimableShares: number | null;
+  /**
+   * Assets deposited but not yet processed by the curator (raw deposit queue).
+   * null when source = "unavailable"; 0 when no pending deposit detected.
+   */
+  pendingDepositAssets: number | null;
+  /**
+   * Shares submitted for withdrawal, awaiting curator processing.
+   * null when source = "unavailable"; 0 when no pending withdrawal detected.
+   */
+  pendingWithdrawalShares: number | null;
   note: string;
 }
 

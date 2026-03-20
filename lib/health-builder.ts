@@ -178,20 +178,36 @@ export async function buildHealthResponse(
         read.claimableFormatted > 0
           ? ` (+${read.claimableFormatted.toFixed(6)} in Mellow claim queue)`
           : "";
+      const pendingDepositNote =
+        read.pendingDepositAssets > 0
+          ? ` Pending deposit: ${read.pendingDepositAssets.toFixed(6)} ${pos.asset} (awaiting curator).`
+          : "";
+      const pendingWithdrawalNote =
+        read.pendingWithdrawalShares > 0
+          ? ` Pending withdrawal: ${read.pendingWithdrawalShares.toFixed(6)} shares (awaiting curator).`
+          : "";
       walletPosition = {
         source: "live_wallet_read",
         deposited: read.deposited,
-        shares: read.totalSharesFormatted,
+        shares: read.sharesFormatted,
+        claimableShares: read.claimableFormatted,
+        pendingDepositAssets: read.pendingDepositAssets,
+        pendingWithdrawalShares: read.pendingWithdrawalShares,
         note:
           `Live read at ${read.fetchedAt}. ` +
-          `Liquid shares: ${read.sharesFormatted.toFixed(6)}${claimNote}. ` +
-          `Total underlying: ${read.deposited !== null ? `${read.deposited.toFixed(6)} ${pos.asset}` : "unknown (convertToAssets unavailable)"}.`,
+          `Liquid shares (ERC-20, post-claim): ${read.sharesFormatted.toFixed(6)}${claimNote}. ` +
+          `Total underlying: ${read.deposited !== null ? `${read.deposited.toFixed(6)} ${pos.asset}` : "unknown (convertToAssets unavailable)"}.` +
+          pendingDepositNote +
+          pendingWithdrawalNote,
       };
     } else {
       walletPosition = {
         source: "unavailable",
         deposited: null,
         shares: null,
+        claimableShares: null,
+        pendingDepositAssets: null,
+        pendingWithdrawalShares: null,
         note: `Live wallet read failed: ${read.reason}. Set ETH_RPC_URL env var or check the contract address.`,
       };
     }
