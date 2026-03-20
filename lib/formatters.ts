@@ -63,6 +63,7 @@ function renderVaultPosition(vs: VaultHealthSummary): string {
   const pos = vs.walletPosition;
   const apyStr = escapeMd(`${vs.currentAPY.toFixed(2)}% APY`);
   const asset = vs.vaultId === "earnETH" ? "ETH" : "USDC";
+  const tokenLabel = vs.vaultId === "earnETH" ? "EarnETH" : "EarnUSD";
 
   if (pos.source === "live_wallet_read") {
     const lines: string[] = [];
@@ -73,7 +74,7 @@ function renderVaultPosition(vs: VaultHealthSummary): string {
     if (pos.deposited !== null && pos.deposited > 0) {
       lines.push(`• *${escapeMd(vs.vaultName)}*: ${escapeMd(`${pos.deposited.toFixed(4)} ${asset}`)} \\(${apyStr}\\)`);
     } else if (liquidShares > 0) {
-      lines.push(`• *${escapeMd(vs.vaultName)}*: ${escapeMd(`${liquidShares.toFixed(6)} shares`)} \\(${apyStr}\\)`);
+      lines.push(`• *${escapeMd(vs.vaultName)}*: ${escapeMd(`${liquidShares.toFixed(6)} ${tokenLabel}`)} \\(${apyStr}\\)`);
     } else if (claimable === 0 && (pos.pendingDepositAssets ?? 0) === 0 && (pos.pendingWithdrawalShares ?? 0) === 0) {
       lines.push(`• *${escapeMd(vs.vaultName)}*: no position \\(${apyStr}\\)`);
     } else {
@@ -83,7 +84,7 @@ function renderVaultPosition(vs: VaultHealthSummary): string {
 
     // Claimable shares: curator has processed the deposit, user hasn't called claim() yet
     if (claimable > 0) {
-      lines.push(`  ⏳ ${escapeMd(`${claimable.toFixed(6)} shares pending claim`)}`);
+      lines.push(`  ⏳ ${escapeMd(`${claimable.toFixed(6)} ${tokenLabel} pending claim`)}`);
     }
 
     // Pending deposit / withdrawal (awaiting curator — amount not shown, just state)
