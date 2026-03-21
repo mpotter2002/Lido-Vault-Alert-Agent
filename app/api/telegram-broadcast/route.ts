@@ -20,7 +20,7 @@ import { NextResponse } from "next/server";
 import { getSubscribers } from "@/lib/subscribers";
 import { buildLivePositions } from "@/lib/live-positions";
 import { buildHealthResponse } from "@/lib/health-builder";
-import { generateEnrichedAlerts } from "@/lib/alert-engine";
+import { generateEnrichedAlerts, claimableSharesAlerts } from "@/lib/alert-engine";
 import { composeTelegramMessage, formatEmailAlert } from "@/lib/formatters";
 import { sendEmail } from "@/lib/email";
 import { VaultHealthSummary } from "@/lib/domain";
@@ -131,6 +131,20 @@ export async function POST(request: Request) {
 
       // Fetch per-wallet positions for display
       const perWalletHealth = await buildPerWalletHealth(sub.wallets);
+
+      // Append per-wallet claimable share alerts
+      const claimable = claimableSharesAlerts(
+        perWalletHealth.flatMap(({ wallet: w, vaults }) =>
+          vaults.map((vs) => ({
+            wallet: w,
+            vaultId: vs.vaultId,
+            vaultName: vs.vaultName,
+            claimableShares: vs.walletPosition.claimableShares ?? 0,
+          }))
+        )
+      );
+      relevantAlerts = [...relevantAlerts, ...claimable];
+
       const payload = composeTelegramMessage(
         sub.wallets,
         relevantAlerts,
