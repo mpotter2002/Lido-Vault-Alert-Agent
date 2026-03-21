@@ -1,0 +1,18 @@
+name: Hourly Alert Broadcast
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # every hour at :00
+  workflow_dispatch:       # allow manual trigger from GitHub UI
+
+jobs:
+  broadcast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger alert broadcast
+        run: |
+          curl -s -X POST https://lidovaultagent.vercel.app/api/telegram-broadcast \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.BROADCAST_SECRET }}" \
+            -d '{}' \
+            | jq '{ sent, skipped, alertCount, criticalCount }'
