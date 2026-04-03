@@ -157,23 +157,38 @@ function positionAlerts(positions: VaultPosition[]): Alert[] {
       });
     }
 
-    // TVL cap approaching (>88%)
-    // Suppressed when vault metrics are seeded: the TVL and cap figures are demo values,
-    // not real on-chain reads. Firing a cap alert from invented numbers is misleading.
-    // When live vault TVL is wired (via totalAssets() reads), this block will activate.
+    // TVL cap milestones (25%, 50%, 75%, 90%, 98%)
+    // Generates an alert when utilization crosses a milestone threshold.
+    // Suppressed when >100% (vault is full, user already knows) or when
+    // vault metrics are seeded demo values.
+    // The broadcast route uses tvl-threshold-tracker to ensure each milestone
+    // is only sent once, and resets when utilization drops back down.
     const tvlUtilization = pos.tvl / pos.tvlCapUSD;
-    if (pos.vaultMetricsSource !== "seeded_demo" && tvlUtilization >= 0.88) {
+    const utilizationPct = tvlUtilization * 100;
+    if (pos.vaultMetricsSource !== "seeded_demo" && utilizationPct >= 25 && utilizationPct <= 101) {
+      const isFull = utilizationPct >= 100;
+      const severity = utilizationPct >= 90 ? "warning" : "info";
       alerts.push({
         id: makeId(),
         vaultId: pos.vaultId,
         vaultName: pos.vaultName,
         type: "tvl_cap_approaching",
-        severity: "warning",
-        title: `${pos.vaultName} is ${(tvlUtilization * 100).toFixed(0)}% full`,
-        summary: `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.`,
-        technicalDetail: `Current TVL: $${(pos.tvl / 1e6).toFixed(1)}M. Cap: $${(pos.tvlCapUSD / 1e6).toFixed(0)}M. Utilization: ${(tvlUtilization * 100).toFixed(1)}%. vaultMetricsSource: ${pos.vaultMetricsSource}.`,
+        severity: isFull ? "warning" : severity,
+        title: isFull
+          ? `${pos.vaultName} is at 100% capacity`
+          : `${pos.vaultName} is ${utilizationPct.toFixed(0)}% full`,
+        summary: isFull
+          ? `${pos.vaultName} has reached its $${(pos.tvlCapUSD / 1e6).toFixed(0)}M capacity cap. New deposits may be limited or blocked. Your existing position is unaffected.`
+          : utilizationPct >= 90
+          ? `${pos.vaultName} TVL is approaching its capacity cap ($${(pos.tvlCapUSD / 1e6).toFixed(0)}M). New deposits may be blocked once the cap is hit. Your existing position is unaffected.`
+          : `${pos.vaultName} TVL is at ${utilizationPct.toFixed(0)}% of its $${(pos.tvlCapUSD / 1e6).toFixed(0)}M capacity cap.`,
+        technicalDetail: `Current TVL: $${(pos.tvl / 1e6).toFixed(1)}M. Cap: $${(pos.tvlCapUSD / 1e6).toFixed(0)}M. Utilization: ${utilizationPct.toFixed(1)}%. vaultMetricsSource: ${pos.vaultMetricsSource}.`,
         actionRequired: false,
-        suggestedAction: "Deposit soon if you plan to increase your position, or monitor for a cap raise.",
+        suggestedAction: isFull
+          ? "Deposits may be limited — monitor for a cap raise if you plan to increase your position."
+          : utilizationPct >= 75
+          ? "Deposit soon if you plan to increase your position, or monitor for a cap raise."
+          : null,
         timestamp: ago(5),
         dismissed: false,
       });

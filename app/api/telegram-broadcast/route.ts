@@ -24,6 +24,7 @@ import { generateEnrichedAlerts, claimableSharesAlerts } from "@/lib/alert-engin
 import { composeTelegramMessage, formatEmailAlert } from "@/lib/formatters";
 import { sendEmail } from "@/lib/email";
 import { VaultHealthSummary } from "@/lib/domain";
+import { shouldNotifyTvlThreshold, setLastNotifiedThreshold } from "@/lib/tvl-threshold-tracker";
 
 /** Fetch health for each wallet independently and return per-wallet results. */
 async function buildPerWalletHealth(
@@ -70,7 +71,25 @@ export async function POST(request: Request) {
 
   // Build live vault state once — shared across all subscribers
   const { positions } = await buildLivePositions();
-  const { alerts } = await generateEnrichedAlerts(positions);
+  const { alerts: rawAlerts } = await generateEnrichedAlerts(positions);
+
+  // Filter TVL cap alerts through threshold tracker so each milestone
+  // (25%, 50%, 75%, 90%, 98%) is only sent once, not every hour.
+  const tvlVaultIdsToNotify = new Set<string>();
+  const tvlThresholdUpdates: { vaultId: string; thresholdPct: number }[] = [];
+  for (const pos of positions) {
+    const utilizationPct = (pos.tvl / pos.tvlCapUSD) * 100;
+    const result = await shouldNotifyTvlThreshold(pos.vaultId, utilizationPct);
+    if (result.notify) {
+      tvlVaultIdsToNotify.add(pos.vaultId);
+      tvlThresholdUpdates.push({ vaultId: pos.vaultId, thresholdPct: result.thresholdPct });
+    }
+  }
+
+  const alerts = rawAlerts.filter((a) => {
+    if (a.type !== "tvl_cap_approaching") return true;
+    return tvlVaultIdsToNotify.has(a.vaultId);
+  });
 
   const criticalCount = alerts.filter((a) => a.severity === "critical").length;
   const warningCount = alerts.filter((a) => a.severity === "warning").length;
@@ -207,6 +226,16 @@ export async function POST(request: Request) {
   );
 
   const sentCount = settled.filter((r) => r.sent).length;
+
+  // Update TVL threshold tracker after successful broadcast so the same
+  // milestone isn't re-sent next hour
+  if (sentCount > 0) {
+    await Promise.all(
+      tvlThresholdUpdates.map(({ vaultId, thresholdPct }) =>
+        setLastNotifiedThreshold(vaultId, thresholdPct)
+      )
+    );
+  }
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
