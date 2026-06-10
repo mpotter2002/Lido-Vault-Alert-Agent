@@ -12,6 +12,11 @@
  *   { "dryRun": true }  — compose messages but don't send
  *   { "onlyCritical": true } — only send if there are critical alerts
  *
+ * Delivery cadence:
+ *   - critical alerts can send every hourly run
+ *   - warning/info alerts are bundled into a once-daily digest window
+ *     (default: 8 AM America/Chicago, configurable via env)
+ *
  * Response:
  *   { sent, skipped, results: [{ chatId, wallet, sent, alertCount, email?, emailSent? }] }
  */
@@ -25,6 +30,7 @@ import { composeTelegramMessage, formatEmailAlert } from "@/lib/formatters";
 import { sendEmail } from "@/lib/email";
 import { VaultHealthSummary } from "@/lib/domain";
 import { shouldNotifyTvlThreshold, setLastNotifiedThreshold } from "@/lib/tvl-threshold-tracker";
+import { getNotificationSchedule } from "@/lib/notification-schedule";
 
 /** Fetch health for each wallet independently and return per-wallet results. */
 async function buildPerWalletHealth(
@@ -104,13 +110,16 @@ export async function POST(request: Request) {
   }
 
   const criticalAlerts = alerts.filter((a) => a.severity === "critical");
+  const schedule = getNotificationSchedule();
 
   // Send personalized message to each subscriber (respecting their preferences)
   const results = await Promise.allSettled(
     subscribers.map(async (sub) => {
       // 1. Start with alerts filtered by their level preference
       let relevantAlerts =
-        sub.alertLevel === "critical" ? criticalAlerts : alerts;
+        sub.alertLevel === "critical" || !schedule.digestWindowOpen
+          ? criticalAlerts
+          : alerts;
 
       // 2. Add a personal yield-floor alert if any vault APY is below their floor
       //    (this fires even in "critical" mode since it's their personal threshold)
@@ -139,12 +148,18 @@ export async function POST(request: Request) {
       relevantAlerts = [...relevantAlerts, ...personalAlerts];
 
       if (relevantAlerts.length === 0 && !dryRun) {
+        const outsideDigestReason =
+          sub.alertLevel === "all" && !schedule.digestWindowOpen
+            ? `, outside daily digest window (${schedule.digestHourLocal}:00 ${schedule.timeZone})`
+            : "";
         return {
           chatId: sub.chatId,
           wallets: sub.wallets,
           sent: false,
           skipped: true,
-          reason: `alertLevel=${sub.alertLevel}, floor=${sub.yieldFloorPct}%, no relevant alerts`,
+          reason:
+            `alertLevel=${sub.alertLevel}, floor=${sub.yieldFloorPct}%` +
+            `${outsideDigestReason}, no relevant alerts`,
         };
       }
 
@@ -240,6 +255,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
     dryRun,
+    schedule,
     subscriberCount: subscribers.length,
     alertCount: alerts.length,
     criticalCount,

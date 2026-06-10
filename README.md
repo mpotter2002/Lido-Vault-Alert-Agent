@@ -7,6 +7,7 @@ A live monitoring agent and Telegram bot for [Lido Earn](https://lido.fi/earn) v
 ## What it does
 
 - **Telegram bot** — users subscribe with their wallet, set alert preferences, and receive personalized vault alerts
+- **Less noisy delivery** — critical issues send immediately; lower-priority warnings are bundled into a daily digest
 - **Live on-chain reads** — APY and TVL from Mellow API, allocation weights from on-chain RiskManager, wallet position via `balanceOf` + `claimableSharesOf`
 - **Alert engine** — detects yield drops, benchmark underperformance, allocation shifts, and TVL changes
 - **API-first** — all endpoints return JSON and are designed to be called by other agents and bots
