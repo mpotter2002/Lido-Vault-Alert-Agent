@@ -14,8 +14,8 @@
  *
  * Delivery cadence:
  *   - critical alerts can send every hourly run
- *   - warning/info alerts are bundled into a once-daily digest window
- *     (default: 8 AM America/Chicago, configurable via env)
+ *   - warning/info alerts are bundled into digest windows twice per day
+ *     (default: 8 AM and 6 PM America/Chicago, configurable via env)
  *
  * Response:
  *   { sent, skipped, results: [{ chatId, wallet, sent, alertCount, email?, emailSent? }] }
@@ -150,7 +150,9 @@ export async function POST(request: Request) {
       if (relevantAlerts.length === 0 && !dryRun) {
         const outsideDigestReason =
           sub.alertLevel === "all" && !schedule.digestWindowOpen
-            ? `, outside daily digest window (${schedule.digestHourLocal}:00 ${schedule.timeZone})`
+            ? `, outside digest windows (${schedule.digestHoursLocal
+                .map((hour) => `${hour}:00`)
+                .join(", ")} ${schedule.timeZone})`
             : "";
         return {
           chatId: sub.chatId,

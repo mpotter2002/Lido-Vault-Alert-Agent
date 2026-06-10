@@ -71,7 +71,7 @@ const ALERT_LEVEL_QUESTION =
   `One quick question — how sensitive do you want alerts?\n\n` +
   `Reply:\n` +
   `1️⃣  Critical only — vault paused, TVL emergency\n` +
-  `2️⃣  All alerts — daily digest for warnings and updates\n\n` +
+  `2️⃣  All alerts — twice-daily digest for warnings and updates\n\n` +
   `You can change this anytime with /alerts`;
 
 const yieldFloorQuestion = (current: number) =>
@@ -245,7 +245,7 @@ export async function POST(request: Request) {
           `• Protocol allocation shifts\n` +
           `• TVL cap is approaching\n` +
           `• Vault health changes\n\n` +
-          `Critical issues send right away. Lower-priority warnings come in a daily digest.\n\n` +
+          `Critical issues send right away. Lower-priority warnings come in a morning and evening digest.\n\n` +
           ALERT_LEVEL_QUESTION
       );
     } else {
@@ -376,7 +376,7 @@ export async function POST(request: Request) {
       await reply(chatId, `✅ Alert level set to critical only.`);
     } else if (arg === "all") {
       await setAlertLevel(chatId, "all");
-      await reply(chatId, `✅ Alert level set to all alerts. You'll get critical alerts right away and a daily digest for lower-priority updates.`);
+      await reply(chatId, `✅ Alert level set to all alerts. You'll get critical alerts right away and a morning and evening digest for lower-priority updates.`);
     } else {
       const current = sub.alertLevel === "critical" ? "Critical only" : "All alerts";
       await reply(
@@ -386,9 +386,9 @@ export async function POST(request: Request) {
           `  • Vault paused\n` +
           `  • Vault health degraded\n` +
           `  • APY drops below your personal floor (always on)\n\n` +
-          `/alerts all — critical alerts + daily digest\n` +
+          `/alerts all — critical alerts + 2 daily digests\n` +
           `  • Critical issues still send right away\n` +
-          `  • Lower-priority warnings are bundled once per day\n` +
+          `  • Lower-priority warnings are bundled twice per day\n` +
           `  • Includes:\n` +
           `  • APY drops more than 0.5% in 24h\n` +
           `  • Yield trailing stETH / Aave benchmark\n` +

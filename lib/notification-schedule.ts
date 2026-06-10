@@ -1,5 +1,5 @@
 const DEFAULT_TIME_ZONE = process.env.NOTIFICATION_TIME_ZONE ?? "America/Chicago";
-const DEFAULT_DIGEST_HOUR = Number(process.env.NON_CRITICAL_DIGEST_HOUR_LOCAL ?? "8");
+const DEFAULT_DIGEST_HOURS = [8, 18];
 
 function getLocalHour(date: Date, timeZone: string): number {
   return Number(
@@ -11,21 +11,33 @@ function getLocalHour(date: Date, timeZone: string): number {
   );
 }
 
+function normalizeDigestHours(rawHours: string | undefined): number[] {
+  const parsed = (rawHours ?? "")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 23);
+
+  const uniqueSorted = Array.from(new Set(parsed)).sort((a, b) => a - b);
+  return uniqueSorted.length > 0 ? uniqueSorted : DEFAULT_DIGEST_HOURS;
+}
+
 export interface NotificationSchedule {
   timeZone: string;
-  digestHourLocal: number;
+  digestHoursLocal: number[];
   digestWindowOpen: boolean;
+  activeDigestHourLocal: number | null;
 }
 
 export function getNotificationSchedule(date = new Date()): NotificationSchedule {
-  const digestHourLocal = Number.isInteger(DEFAULT_DIGEST_HOUR)
-    ? DEFAULT_DIGEST_HOUR
-    : 8;
+  const digestHoursLocal = normalizeDigestHours(
+    process.env.NON_CRITICAL_DIGEST_HOURS_LOCAL
+  );
   const currentHour = getLocalHour(date, DEFAULT_TIME_ZONE);
 
   return {
     timeZone: DEFAULT_TIME_ZONE,
-    digestHourLocal,
-    digestWindowOpen: currentHour === digestHourLocal,
+    digestHoursLocal,
+    digestWindowOpen: digestHoursLocal.includes(currentHour),
+    activeDigestHourLocal: digestHoursLocal.includes(currentHour) ? currentHour : null,
   };
 }
