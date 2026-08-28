@@ -2,7 +2,7 @@
 
 A live monitoring agent and Telegram bot for [Lido Earn](https://lido.fi/earn) vaults (EarnETH and EarnUSD). Reads real on-chain data, tracks vault health, and sends plain-language alerts to subscribers.
 
-**Live:** https://lidovaultagent.vercel.app/
+**Live:** https://www.lidovaultagent.app/
 
 ## What it does
 

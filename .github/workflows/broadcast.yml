@@ -11,8 +11,18 @@ jobs:
     steps:
       - name: Trigger alert broadcast
         run: |
-          curl -s -X POST https://lidovaultagent.vercel.app/api/telegram-broadcast \
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 20 \
+            --max-time 120 \
+            --retry 3 \
+            --retry-all-errors \
+            -X POST https://www.lidovaultagent.app/api/telegram-broadcast \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.BROADCAST_SECRET }}" \
             -d '{}' \
-            | jq '{ sent, skipped, alertCount, criticalCount }'
+            --output "$response_file"
+
+          jq -e '{ sent, skipped, alertCount, criticalCount }' "$response_file"

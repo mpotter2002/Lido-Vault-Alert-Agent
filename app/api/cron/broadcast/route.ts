@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     }
   }
 
-  const baseUrl = process.env.BASE_URL ?? "https://lidovaultagent.vercel.app";
+  const baseUrl = process.env.BASE_URL ?? "https://www.lidovaultagent.app";
   const broadcastSecret = process.env.BROADCAST_SECRET;
 
   const res = await fetch(`${baseUrl}/api/telegram-broadcast`, {

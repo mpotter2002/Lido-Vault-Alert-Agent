@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 
-const BASE_URL = "https://lidovaultagent.vercel.app";
+const BASE_URL = "https://www.lidovaultagent.app";
 const BOT_URL = "https://t.me/LidoVaultBot";
 
 // ── Tokens ───────────────────────────────────────────────────────────────────
