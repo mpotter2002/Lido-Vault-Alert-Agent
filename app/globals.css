@@ -285,6 +285,8 @@ main {
   gap: 2px;
 }
 
+.signal-grid { gap: 14px; }
+
 .signal-item,
 .trust-grid > div {
   min-height: 142px;
@@ -299,7 +301,7 @@ main {
 .steps-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 14px;
 }
 
 .step-item {

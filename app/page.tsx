@@ -291,6 +291,22 @@ export default function Home() {
           </div>
         </section>
 
+        <section id="monitoring" className="content-section">
+          <SectionHeader
+            eyebrow="Monitoring coverage"
+            title="What the Lido vault monitor tracks"
+            copy="Each signal is designed to answer a practical question: how is the vault performing, how is your position affected, and has anything changed enough to warrant attention?"
+          />
+          <div className="signal-grid">
+            {monitoringSignals.map((signal) => (
+              <article className="signal-item" key={signal.title}>
+                <h3>{signal.title}</h3>
+                <p>{signal.detail}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
         <section id="alerts" className="content-section">
           <SectionHeader
             eyebrow="Real alert output"
@@ -336,22 +352,6 @@ export default function Home() {
                 available to other tools through the public API.
               </p>
             </div>
-          </div>
-        </section>
-
-        <section id="monitoring" className="content-section">
-          <SectionHeader
-            eyebrow="Monitoring coverage"
-            title="What the Lido vault monitor tracks"
-            copy="Each signal is designed to answer a practical question: how is the vault performing, how is your position affected, and has anything changed enough to warrant attention?"
-          />
-          <div className="signal-grid">
-            {monitoringSignals.map((signal) => (
-              <article className="signal-item" key={signal.title}>
-                <h3>{signal.title}</h3>
-                <p>{signal.detail}</p>
-              </article>
-            ))}
           </div>
         </section>
 
