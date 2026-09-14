@@ -474,7 +474,7 @@ main {
 }
 
 .trust-section { padding-bottom: 48px; }
-.trust-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.trust-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 
 .trust-grid > div {
   min-height: 190px;
