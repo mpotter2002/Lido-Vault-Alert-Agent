@@ -42,3 +42,5 @@ next-env.d.ts
 # subscriber data — contains chat IDs, keep out of git
 /data/subscribers.json
 .claude/
+.seo-cache/
+output/
