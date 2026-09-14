@@ -431,7 +431,7 @@ main {
 .endpoint-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 14px;
   margin-top: 24px;
 }
 
